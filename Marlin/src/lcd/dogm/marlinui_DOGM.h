@@ -29,7 +29,7 @@
 
 #include <U8glib-HAL.h>
 #include "HAL_LCD_class_defines.h"
-
+#include "U8g2lib.h"
 //#define ALTERNATIVE_LCD
 
 #if ENABLED(REPRAPWORLD_GRAPHICAL_LCD)
@@ -190,7 +190,7 @@
 
   // Generic support for SSD1309 OLED I2C LCDs
 
-  #define U8G_CLASS U8GLIB_SSD1309_128X64
+  #define U8G_CLASS U8G2_SSD1309_128X64_NONAME0_F_SW_I2C
   #define U8G_PARAM (U8G_I2C_OPT_NONE | U8G_I2C_OPT_FAST)       // I2C
 
 #elif ENABLED(U8GLIB_SSD1306)
@@ -235,8 +235,16 @@
 #endif
 
 // For selective rendering within a Y range
-#define PAGE_OVER(ya)         ((ya) <= u8g.getU8g()->current_page.y1) // Does the current page follow a region top?
-#define PAGE_UNDER(yb)        ((yb) >= u8g.getU8g()->current_page.y0) // Does the current page precede a region bottom?
-#define PAGE_CONTAINS(ya, yb) ((yb) >= u8g.getU8g()->current_page.y0 && (ya) <= u8g.getU8g()->current_page.y1) // Do two vertical regions overlap?
+// #define PAGE_OVER(ya)         ((ya) <= u8g.getU8g2()->current_page.y1) // Does the current page follow a region top?
+// #define PAGE_UNDER(yb)        ((yb) >= u8g.getU8g2()->current_page.y0) // Does the current page precede a region bottom?
+// #define PAGE_CONTAINS(ya, yb) ((yb) >= u8g.getU8g2()->current_page.y0 && (ya) <= u8g.getU8g2()->current_page.y1) // Do two vertical regions overlap?
+
+// #define PAGE_OVER(ya) ((ya) < (u8g.getBufferCurrTileRow() + 1) * u8g.getBufferTileHeight())                                                                              // Does the current page follow a region top?
+// #define PAGE_UNDER(yb) ((yb) >= u8g.getBufferCurrTileRow() * u8g.getBufferTileHeight())                                                                                  // Does the current page precede a region bottom?
+// #define PAGE_CONTAINS(ya, yb) ((yb) >= (u8g.getBufferCurrTileRow() * u8g.getBufferTileHeight()) && (ya) < ((u8g.getBufferCurrTileRow() + 1) * u8g.getBufferTileHeight()))  // Do two vertical regions overlap?
+
+#define PAGE_OVER(ya) true
+#define PAGE_UNDER(yb) true
+#define PAGE_CONTAINS(ya, yb) true
 
 extern U8G_CLASS u8g;

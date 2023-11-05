@@ -74,8 +74,9 @@
 #else
   #define FONT_STATUSMENU_NAME MENU_FONT_NAME
 #endif
+#include "U8g2lib.h"
 
-U8G_CLASS u8g;
+U8G_CLASS u8g(U8G2_R0, I2C_SCL_PIN_LCD, I2C_SDA_PIN_LCD, LCD_RESET_PIN);
 
 #include LANGUAGE_DATA_INCL(LCD_LANGUAGE)
 #ifdef LCD_LANGUAGE_2
@@ -99,10 +100,12 @@ void MarlinUI::set_font(const MarlinFont font_nr) {
   static char currentfont = 0;
   if (font_nr != currentfont) {
     switch ((currentfont = font_nr)) {
-      case FONT_STATUSMENU : u8g.setFont(FONT_STATUSMENU_NAME); break;
-      case FONT_EDIT       : u8g.setFont(EDIT_FONT_NAME);       break;
+      case FONT_STATUSMENU : u8g.setFont(u8g2_font_profont11_tf); break;
+      //u8g2_font_spleen5x8_mf
+      case FONT_EDIT       : u8g.setFont(u8g2_font_profont11_tf);       break;
       default:
-      case FONT_MENU       : u8g.setFont(MENU_FONT_NAME);       break;
+      case FONT_MENU       : u8g.setFont(u8g2_font_profont11_tf);       break;
+      //u8g2_font_spleen6x12_mf
     }
   }
 }
@@ -214,7 +217,7 @@ bool MarlinUI::detected() { return true; }
     NOLESS(offy, 0);
 
     auto _draw_bootscreen_bmp = [&](const uint8_t *bitmap) {
-      u8g.drawBitmapP(offx, offy, START_BMP_BYTEWIDTH, START_BMPHEIGHT, bitmap);
+      u8g.drawBitmap(offx, offy, START_BMP_BYTEWIDTH, START_BMPHEIGHT, bitmap);
       set_font(FONT_MENU);
       if (!two_part || !line2) lcd_put_u8str(txt_offx_1, txt_base - (MENU_FONT_HEIGHT), F(SHORT_BUILD_VERSION));
       if (!two_part || line2) lcd_put_u8str(txt_offx_2, txt_base, F(MARLIN_WEBSITE_URL));
@@ -260,13 +263,6 @@ bool MarlinUI::detected() { return true; }
 
 // Initialize or re-initialize the LCD
 void MarlinUI::init_lcd() {
-
-  static bool did_init_u8g = false;
-  if (!did_init_u8g) {
-    u8g.init(U8G_PARAM);
-    did_init_u8g = true;
-  }
-
   #if PIN_EXISTS(LCD_BACKLIGHT)
     OUT_WRITE(LCD_BACKLIGHT_PIN, DISABLED(DELAYED_BACKLIGHT_INIT)); // Illuminate after reset or right away
   #endif
@@ -280,12 +276,14 @@ void MarlinUI::init_lcd() {
 
   #if PIN_EXISTS(LCD_RESET)
     // Perform a clean hardware reset with needed delays
-    OUT_WRITE(LCD_RESET_PIN, LOW);
-    hal.delay_ms(5);
-    WRITE(LCD_RESET_PIN, HIGH);
-    hal.delay_ms(5);
-    u8g.begin();
+    // OUT_WRITE(LCD_RESET_PIN, LOW);
+    // hal.delay_ms(5);
+    // WRITE(LCD_RESET_PIN, HIGH);
+    // hal.delay_ms(5);
   #endif
+  u8g.setBusClock(400000);
+  u8g.begin();
+  u8g.enableUTF8Print();
 
   #if PIN_EXISTS(LCD_BACKLIGHT) && ENABLED(DELAYED_BACKLIGHT_INIT)
     WRITE(LCD_BACKLIGHT_PIN, HIGH);
@@ -473,7 +471,7 @@ void MarlinUI::clear_lcd() { } // Automatically cleared by Picture Loop
     if (!mark_as_selected(row, sel)) return;
 
     const uint8_t vallen = (pgm ? utf8_strlen_P(inStr) : utf8_strlen(inStr)),
-                  pixelwidth = (pgm ? uxg_GetUtf8StrPixelWidthP(u8g.getU8g(), inStr) : uxg_GetUtf8StrPixelWidth(u8g.getU8g(), inStr));
+                  pixelwidth = u8g.getStrWidth(inStr);// (pgm ? uxg_GetUtf8StrPixelWidthP(u8g.getU8g(), inStr) : uxg_GetUtf8StrPixelWidth(u8g.getU8g(), inStr));
     const u8g_uint_t prop = USE_WIDE_GLYPH ? 2 : 1;
 
     uint8_t n = LCD_WIDTH - 2 - vallen * prop;

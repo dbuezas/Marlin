@@ -3569,3 +3569,6 @@
 
 // Disable servo with M282 to reduce power consumption, noise, and heat when not in use
 //#define SERVO_DETACH_GCODE
+
+#define I2C_SDA_PIN_LCD                   EXP1_04_PIN
+#define I2C_SCL_PIN_LCD                   EXP1_06_PIN
