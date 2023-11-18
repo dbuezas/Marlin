@@ -31,7 +31,15 @@
 
 #include "pca9632.h"
 #include "leds.h"
-#include <Wire.h>
+
+#define BUFFER_LENGTH 144
+
+#include <AsyncDelay.h>
+#include <SoftWire.h>
+
+char swTxBuffer2[BUFFER_LENGTH];
+char swRxBuffer2[BUFFER_LENGTH];
+SoftWire Wire(DOGLCD_SDA, DOGLCD_SCL);
 
 #define PCA9632_MODE1_VALUE   0b00000001 //(ALLCALL)
 #define PCA9632_MODE2_VALUE   0b00010101 //(DIMMING, INVERT, CHANGE ON STOP,TOTEM)
@@ -125,6 +133,9 @@ static void PCA9632_WriteAllRegisters(const byte addr, const byte regadd, const 
 #endif
 
 void PCA9632_set_led_color(const LEDColor &color) {
+  Wire.setClock(400000);
+  Wire.setTxBuffer(swTxBuffer2, BUFFER_LENGTH);
+  Wire.setRxBuffer(swRxBuffer2, BUFFER_LENGTH);
   Wire.begin();
   if (!PCA_init) {
     PCA_init = 1;
