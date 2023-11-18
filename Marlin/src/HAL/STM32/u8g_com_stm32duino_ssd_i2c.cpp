@@ -69,8 +69,9 @@
   Default value is 32
   Increate this value to 144 to send U8G_COM_MSG_WRITE_SEQ in single block
 */
+#define BUFFER_LENGTH 250
 
-#if !defined(BUFFER_LENGTH) || BUFFER_LENGTH >= 144
+#if !defined(BUFFER_LENGTH) || BUFFER_LENGTH > 300
   #define BUFFER_LENGTH 32
 #endif
 #define I2C_MAX_LENGTH (BUFFER_LENGTH - 1)
