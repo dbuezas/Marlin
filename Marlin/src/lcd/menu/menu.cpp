@@ -251,6 +251,7 @@ void MarlinUI::synchronize(FSTR_P const fmsg/*=nullptr*/) {
  *   screen_items is the total number of items in the menu (after one call)
  */
 void scroll_screen(const uint8_t limit, const bool is_menu) {
+  static int8_t last_encoderLine = encoderLine;
   ui.encoder_direction_menus();
   ENCODER_RATE_MULTIPLY(false);
   if (int32_t(ui.encoderPosition) < 0) ui.encoderPosition = 0;
@@ -269,6 +270,10 @@ void scroll_screen(const uint8_t limit, const bool is_menu) {
   }
   else
     encoderTopLine = encoderLine;
+  if (encoderLine != last_encoderLine) {
+    BUZZ(2, 15000);
+    last_encoderLine = encoderLine;
+  }
 }
 
 #if HAS_LINE_TO_Z
