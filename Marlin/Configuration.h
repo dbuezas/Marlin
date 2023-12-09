@@ -698,9 +698,14 @@
     // #define DEFAULT_Ki 0.83
     // #define DEFAULT_Kd 46.0
     
-    #define DEFAULT_Kp 10.63
-    #define DEFAULT_Ki 0.63
-    #define DEFAULT_Kd 44.66
+    // #define DEFAULT_Kp 10.63
+    // #define DEFAULT_Ki 0.63
+    // #define DEFAULT_Kd 44.66
+    
+    #define DEFAULT_Kp 12.32
+    #define DEFAULT_Ki 1.07
+    #define DEFAULT_Kd 35.47
+
 
     // UM2 (E3D V6 Hotend)
     //#define DEFAULT_Kp  36.59
@@ -1360,7 +1365,7 @@
  *
  * See https://github.com/synthetos/TinyG/wiki/Jerk-Controlled-Motion-Explained
  */
-//#define S_CURVE_ACCELERATION
+#define S_CURVE_ACCELERATION
 
 //===========================================================================
 //============================= Z Probe Options =============================
@@ -1677,8 +1682,8 @@
  * A total of 2 does fast/slow probes with a weighted average.
  * A total of 3 or more adds more slow probes, taking the average.
  */
-//#define MULTIPLE_PROBING 2
-//#define EXTRA_PROBING    1
+#define MULTIPLE_PROBING 2
+#define EXTRA_PROBING    1
 
 /**
  * Z probes require clearance when deploying, stowing, and moving between
@@ -1694,9 +1699,9 @@
  * Example: `M851 Z-5` with a CLEARANCE of 4  =>  9mm from bed to nozzle.
  *     But: `M851 Z+1` with a CLEARANCE of 2  =>  2mm from bed to nozzle.
  */
-#define Z_CLEARANCE_DEPLOY_PROBE   10 // (mm) Z Clearance for Deploy/Stow
+#define Z_CLEARANCE_DEPLOY_PROBE    5 // (mm) Z Clearance for Deploy/Stow
 #define Z_CLEARANCE_BETWEEN_PROBES  2 // (mm) Z Clearance between probe points
-#define Z_CLEARANCE_MULTI_PROBE     1 // (mm) Z Clearance between multiple probes
+#define Z_CLEARANCE_MULTI_PROBE     1.5 // (mm) Z Clearance between multiple probes
 #define Z_PROBE_ERROR_TOLERANCE     3 // (mm) Tolerance for early trigger (<= -probe.offset.z + ZPET)
 //#define Z_AFTER_PROBING           5 // (mm) Z position after probing is done
 
@@ -1737,7 +1742,7 @@
 //#define DELAY_BEFORE_PROBING 200  // (ms) To prevent vibrations from triggering piezo sensors
 
 // Require minimum nozzle and/or bed temperature for probing
-//#define PREHEAT_BEFORE_PROBING
+#define PREHEAT_BEFORE_PROBING
 #if ENABLED(PREHEAT_BEFORE_PROBING)
   #define PROBING_NOZZLE_TEMP 120   // (°C) Only applies to E0 at this time
   #define PROBING_BED_TEMP     50
@@ -3642,12 +3647,12 @@
 /****** CUSTOM  *******/
 
 
-#define TEMP_0_CS_PIN                     E1_ENABLE_PIN
+#define TEMP_0_CS_PIN                     E1_DIR_PIN
 #define TEMP_0_SCK_PIN                    TMC_SPI_SCK
 #define TEMP_0_MISO_PIN                   TMC_SPI_MISO
 #define TEMP_0_MOSI_PIN                   TMC_SPI_MOSI
 
-#define TEMP_BED_CS_PIN                   E1_DIR_PIN
+#define TEMP_BED_CS_PIN                   E1_ENABLE_PIN
 #define TEMP_BED_SCK_PIN                  TEMP_0_SCK_PIN
 #define TEMP_BED_MISO_PIN                 TEMP_0_MISO_PIN
 #define TEMP_BED_MOSI_PIN                 TEMP_0_MOSI_PIN
