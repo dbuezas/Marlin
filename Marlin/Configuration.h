@@ -1271,7 +1271,7 @@
 //#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 200, 282 } // UM2 Stock Extruder (black box)
 //#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 200, 369 } // UM2+ (white box)
 // #define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 400, 813 } // UM2 w/E3D Titan
-#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 400, 817 } // UM2 w/BMG clone
+#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 400, 204.25 } // UM2 w/BMG clone
 
 /**
  * Enable support for M92. Disable to save at least ~530 bytes of flash.
@@ -1323,12 +1323,12 @@
  * When changing speed and direction, if the difference is less than the
  * value set here, it may happen instantaneously.
  */
-//#define CLASSIC_JERK
+#define CLASSIC_JERK
 #if ENABLED(CLASSIC_JERK)
-  #define DEFAULT_XJERK 10.0
-  #define DEFAULT_YJERK 10.0
-  #define DEFAULT_ZJERK  0.3
-  #define DEFAULT_EJERK  5.0
+  #define DEFAULT_XJERK 40.0
+  #define DEFAULT_YJERK 40.0
+  #define DEFAULT_ZJERK  0.4
+  #define DEFAULT_EJERK  10.0
   //#define DEFAULT_IJERK  0.3
   //#define DEFAULT_JJERK  0.3
   //#define DEFAULT_KJERK  0.3
