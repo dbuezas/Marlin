@@ -1,0 +1,34 @@
+G0 X50;
+G0 X150;
+
+
+M203 X99999; max x speed
+M201 X999999; max x accel
+
+M569 S0 X; disable stealthchop
+M569 S1 X; enable stealthchop
+
+
+M204 T12500; travel accel
+G0 X0 F600; 10mm/s 
+G0 X0 F6000; 100mm/s 
+G0 X0 F12000; 200mm/s 
+G0 X0 F15000; 250mm/s 
+G0 X0 F18000; 300mm/s 
+G0 X0 F21000; 350mm/s 
+G0 X0 F22500; 375mm/s 
+G0 X0 F24000; 400mm/s 
+G0 X0 F30000; 500mm/s 
+
+G0 X10
+G0 X150
+
+
+# Unsafe Maximums
+M204 T50000; travel accel
+G0 X0 F15000; 250mm/s 
+
+M204 T15000; travel accel
+G0 X0 F24000; 400mm/s
+
+

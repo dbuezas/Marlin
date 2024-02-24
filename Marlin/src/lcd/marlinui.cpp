@@ -1381,6 +1381,9 @@ void MarlinUI::init() {
       #if HAS_ENCODER_WHEEL
         #define ENCODER_DEBOUNCE_MS 2 
         static uint8_t lastEncoderBits, enc;
+        uint8_t buttons = 0;
+        if (BUTTON_PRESSED(EN1))                 buttons |= EN_A;
+        if (BUTTON_PRESSED(EN2))                 buttons |= EN_B;
         static uint8_t buttons_was = buttons;
         static millis_t en_A_blocked_ms, en_B_blocked_ms;
 
