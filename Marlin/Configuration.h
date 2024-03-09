@@ -702,9 +702,13 @@
     // #define DEFAULT_Ki 0.63
     // #define DEFAULT_Kd 44.66
     
-    #define DEFAULT_Kp 12.32
-    #define DEFAULT_Ki 1.07
-    #define DEFAULT_Kd 35.47
+    // #define DEFAULT_Kp 12.32
+    // #define DEFAULT_Ki 1.07
+    // #define DEFAULT_Kd 35.47
+    #define DEFAULT_Kp 11.37
+    #define DEFAULT_Ki 1.13
+    #define DEFAULT_Kd 28.65
+
 
 
     // UM2 (E3D V6 Hotend)
@@ -1271,7 +1275,7 @@
 //#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 200, 282 } // UM2 Stock Extruder (black box)
 //#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 200, 369 } // UM2+ (white box)
 // #define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 400, 813 } // UM2 w/E3D Titan
-#define DEFAULT_AXIS_STEPS_PER_UNIT   { 80, 80, 400, 204.25 } // UM2 w/BMG clone
+#define DEFAULT_AXIS_STEPS_PER_UNIT   { 10*X_MICROSTEPS, 9.375*Y_MICROSTEPS, 25*Z_MICROSTEPS, 43.125*E0_MICROSTEPS } // UM2 w/orbiter 2
 
 /**
  * Enable support for M92. Disable to save at least ~530 bytes of flash.
@@ -1296,7 +1300,7 @@
  * Override with M201
  *                                      X, Y, Z [, I [, J [, K...]]], E0 [, E1[, E2...]]
  */
-#define DEFAULT_MAX_ACCELERATION      { 5000, 5000, 100, 1000 }
+#define DEFAULT_MAX_ACCELERATION      { 5000, 5000, 100, 1500 }
 
 //#define LIMITED_MAX_ACCEL_EDITING     // Limit edit via M201 or LCD to DEFAULT_MAX_ACCELERATION * 2
 #if ENABLED(LIMITED_MAX_ACCEL_EDITING)
@@ -1325,10 +1329,10 @@
  */
 #define CLASSIC_JERK
 #if ENABLED(CLASSIC_JERK)
-  #define DEFAULT_XJERK 40.0
-  #define DEFAULT_YJERK 40.0
+  #define DEFAULT_XJERK 20.0
+  #define DEFAULT_YJERK 20.0
   #define DEFAULT_ZJERK  0.4
-  #define DEFAULT_EJERK  10.0
+  #define DEFAULT_EJERK  5.0
   //#define DEFAULT_IJERK  0.3
   //#define DEFAULT_JJERK  0.3
   //#define DEFAULT_KJERK  0.3
@@ -1744,7 +1748,7 @@
 // Require minimum nozzle and/or bed temperature for probing
 #define PREHEAT_BEFORE_PROBING
 #if ENABLED(PREHEAT_BEFORE_PROBING)
-  #define PROBING_NOZZLE_TEMP 120   // (°C) Only applies to E0 at this time
+  #define PROBING_NOZZLE_TEMP 200   // (°C) Only applies to E0 at this time
   #define PROBING_BED_TEMP     50
 #endif
 
@@ -1857,7 +1861,7 @@
 
 // The size of the printable area
 #define X_BED_SIZE 226
-#define Y_BED_SIZE 224
+#define Y_BED_SIZE 210
 
 // Travel limits (linear=mm, rotational=°) after homing, corresponding to endstop positions.
 #define X_MIN_POS 0
