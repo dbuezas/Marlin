@@ -1204,11 +1204,11 @@
 #define INPUT_SHAPING_Y
 #if ANY(INPUT_SHAPING_X, INPUT_SHAPING_Y)
   #if ENABLED(INPUT_SHAPING_X)
-    #define SHAPING_FREQ_X  53.7        // (Hz) The default dominant resonant frequency on the X axis.
-    #define SHAPING_ZETA_X  0.4f       // Damping ratio of the X axis (range: 0.0 = no damping to 1.0 = critical damping).
+    #define SHAPING_FREQ_X  41        // (Hz) The default dominant resonant frequency on the X axis.
+    #define SHAPING_ZETA_X  0.1f       // Damping ratio of the X axis (range: 0.0 = no damping to 1.0 = critical damping).
   #endif
   #if ENABLED(INPUT_SHAPING_Y)
-    #define SHAPING_FREQ_Y  54.5        // (Hz) The default dominant resonant frequency on the Y axis.
+    #define SHAPING_FREQ_Y  45        // (Hz) The default dominant resonant frequency on the Y axis.
     #define SHAPING_ZETA_Y  0.1f       // Damping ratio of the Y axis (range: 0.0 = no damping to 1.0 = critical damping).
   #endif
   //#define SHAPING_MIN_FREQ  20        // By default the minimum of the shaping frequencies. Override to affect SRAM usage.
@@ -2994,7 +2994,7 @@
   #if AXIS_IS_TMC_CONFIG(Y)
     #define Y_CURRENT       550
     #define Y_CURRENT_HOME  Y_CURRENT
-    #define Y_MICROSTEPS     16
+    #define Y_MICROSTEPS     32
     #define Y_RSENSE          0.11
     #define Y_CHAIN_POS      -1
     //#define Y_INTERPOLATE  true
