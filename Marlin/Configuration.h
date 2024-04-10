@@ -1626,7 +1626,7 @@
 #define PROBING_MARGIN 0
 
 // X and Y axis travel speed (mm/min) between probes
-#define XY_PROBE_FEEDRATE (200*60)
+#define XY_PROBE_FEEDRATE (300*60)
 
 // Feedrate (mm/min) for the first approach when double-probing (MULTIPLE_PROBING == 2)
 #define Z_PROBE_FEEDRATE_FAST (20*60)
@@ -1853,7 +1853,7 @@
 // @section geometry
 
 // The size of the printable area
-#define X_BED_SIZE 226
+#define X_BED_SIZE 219
 #define Y_BED_SIZE 210
 
 // Travel limits (linear=mm, rotational=°) after homing, corresponding to endstop positions.
