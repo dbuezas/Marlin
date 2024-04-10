@@ -59,6 +59,9 @@ const char* i16tostr3rj(const int16_t x);
 // Convert signed int to lj string with 123 format
 const char* i16tostr3left(const int16_t xx);
 
+// Convert signed int to rj string with _12345, -12345, ___-12, or ____-1 format
+const char* i32tostr7signlf(const int32_t i);
+
 // Convert signed int to rj string with _123, -123, _-12, or __-1 format
 const char* i16tostr4signrj(const int16_t x);
 

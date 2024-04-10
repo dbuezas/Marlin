@@ -550,6 +550,28 @@ void menu_backlash();
     END_MENU();
   }
 
+  void menu_advanced_vfa() {
+      #define VALUE_ITEM(MSG, VALUE, STYL)    do{ char msg[21]; strcpy_P(msg, PSTR(": ")); strcpy(msg + 2, VALUE); STATIC_ITEM(MSG, STYL, msg); }while(0)
+      START_MENU();
+      BACK_ITEM(MSG_ADVANCED_SETTINGS);
+      VALUE_ITEM(MSG_AUTO_HOME_X, i32tostr7signlf(stepper.count_position.x), SS_FULL);          // Print Count: 999
+      VALUE_ITEM(MSG_AUTO_HOME_Y, i32tostr7signlf(stepper.count_position.y), SS_FULL);          // Print Count: 999
+      editable.decimal = stepper.get_vfa_amplitude(X_AXIS);
+      EDIT_ITEM_FAST_N(float32, X_AXIS, MSG_VFA_AMPLITUDE, &editable.decimal, 0, 1, []{ stepper.set_vfa_amplitude(X_AXIS, editable.decimal); });
+      editable.decimal = stepper.get_vfa_phase(X_AXIS);
+      EDIT_ITEM_FAST_N(float32, X_AXIS, MSG_VFA_PHASE, &editable.decimal, 0, 1, []{ stepper.set_vfa_phase(X_AXIS, editable.decimal); });
+      editable.decimal = stepper.get_vfa_width(X_AXIS);
+      EDIT_ITEM_FAST_N(float3, X_AXIS, MSG_VFA_WIDTH, &editable.decimal, 0.0f, 1000.0f, []{ stepper.set_vfa_width(X_AXIS, editable.decimal); });
+      
+      editable.decimal = stepper.get_vfa_amplitude(Y_AXIS);
+      EDIT_ITEM_FAST_N(float32, Y_AXIS, MSG_VFA_AMPLITUDE, &editable.decimal, 0, 1, []{ stepper.set_vfa_amplitude(Y_AXIS, editable.decimal); });
+      editable.decimal = stepper.get_vfa_phase(Y_AXIS);
+      EDIT_ITEM_FAST_N(float32, Y_AXIS, MSG_VFA_PHASE, &editable.decimal, 0, 1, []{ stepper.set_vfa_phase(Y_AXIS, editable.decimal); });
+      editable.decimal = stepper.get_vfa_width(Y_AXIS);
+      EDIT_ITEM_FAST_N(float3, Y_AXIS, MSG_VFA_WIDTH, &editable.decimal, 0.0f, 1000.0f, []{ stepper.set_vfa_width(Y_AXIS, editable.decimal); });
+      
+      END_MENU();
+  }
   #if ENABLED(SHAPING_MENU)
 
     void menu_advanced_input_shaping() {
@@ -710,6 +732,7 @@ void menu_advanced_settings() {
     #if ENABLED(SHAPING_MENU)
       if (!is_busy) SUBMENU(MSG_INPUT_SHAPING, menu_advanced_input_shaping);
     #endif
+    SUBMENU(MSG_VFA, menu_advanced_vfa);
 
     #if ENABLED(CLASSIC_JERK)
       // M205 - Max Jerk

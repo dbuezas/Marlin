@@ -147,6 +147,20 @@ const char* i16tostr3left(const int16_t i) {
   return str;
 }
 
+// Convert signed 32bit int to lj string with 1234, _123, -123, _-12, or __-1 format
+const char* i32tostr7signlf(const int32_t i) {
+  const bool neg = i < 0;
+  const int32_t ii = neg ? -i : i;
+  conv[1] = neg ? '-' : ' ';
+  conv[2] = DIGIMOD(ii, 100000);
+  conv[3] = DIGIMOD(ii, 10000);
+  conv[4] = DIGIMOD(ii, 1000);
+  conv[5] = DIGIMOD(ii, 100);
+  conv[6] = DIGIMOD(ii, 10);
+  conv[7] = DIGIMOD(ii, 1);
+   
+  return &conv[1];
+}
 // Convert signed 16bit int to rj string with 1234, _123, -123, _-12, or __-1 format
 const char* i16tostr4signrj(const int16_t i) {
   const bool neg = i < 0;

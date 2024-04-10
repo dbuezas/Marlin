@@ -261,7 +261,8 @@ uint32_t Stepper::advance_divisor = 0,
   int32_t Stepper::ne_edividend;
   uint32_t Stepper::ne_scale;
 #endif
-
+VfaParams     Stepper::vfa_x;
+VfaParams     Stepper::vfa_y;
 #if HAS_ZV_SHAPING
   shaping_time_t      ShapingQueue::now = 0;
   #if ANY(MCU_LPC1768, MCU_LPC1769) && DISABLED(NO_LPC_ETHERNET_BUFFER)
@@ -274,6 +275,7 @@ uint32_t Stepper::advance_divisor = 0,
   shaping_echo_axis_t ShapingQueue::echo_axes[shaping_echoes];
   uint16_t            ShapingQueue::tail = 0;
 
+  
   #if ENABLED(INPUT_SHAPING_X)
     shaping_time_t  ShapingQueue::delay_x;
     shaping_time_t  ShapingQueue::peek_x_val = shaping_time_t(-1);
@@ -1759,8 +1761,17 @@ void Stepper::pulse_phase_isr() {
 
     #define _APPLY_STEP(AXIS, INV, ALWAYS) AXIS ##_APPLY_STEP(INV, ALWAYS)
     #define _STEP_STATE(AXIS) STEP_STATE_## AXIS
-
+    
     // Determine if a pulse is needed using Bresenham
+    // dividend= 3
+    // divisor = 5
+    //   + 3 + 3 + 3 + 3 + 3 dividend
+    // 0   3   6   9   12  15 steps
+    //         1       2   3 suma dividend / divisor
+    // 0   3   1   4   2   0 de
+    // 0   0   1   0   2   3 steps
+    // ----------------------------
+    //     0
     #define PULSE_PREP(AXIS) do{ \
       int32_t de = delta_error[_AXIS(AXIS)] + advance_dividend[_AXIS(AXIS)]; \
       if (de >= 0) { \
@@ -2798,6 +2809,33 @@ hal_timer_t Stepper::block_phase_isr() {
     }
   } // !current_block
 
+  // Then, apply the oscillating correction factor
+  // The correction factor oscillates around 1 (e.g., between 0.99 and 1.01 for a 1% correction)
+
+  // -1 =>.5
+  // -.5=> .75
+  //  0 => 1
+  //  .5 => 1.5
+  //  1 => 2
+  xyze_float_t advance_dividend_f = (current_block->steps << 1).asFloat();
+  
+
+  float x_proportion =  (float)advance_dividend.x /( (float)advance_dividend.x+(float)advance_dividend.y);
+  float y_proportion =  1-x_proportion;
+
+  float correction_term = 
+    ((vfa_x.width>0) ?
+      (sin((count_position.x + vfa_x.phase*vfa_x.width) * 2 * PI / vfa_x.width) * vfa_x.amplitude/1000* x_proportion)
+      :0)
+    +
+    ((vfa_y.width>0) ?
+      (sin((count_position.y + vfa_y.phase*vfa_y.width) * 2 * PI / vfa_y.width) * vfa_y.amplitude/1000* y_proportion)
+      :0);
+  float want_speed = 1.0f/interval;
+  float corrected_speed = want_speed+correction_term;
+  uint32_t corrected_interval = 1/corrected_speed;
+  bool is_valid = corrected_interval == corrected_interval && corrected_interval>0;
+  if (is_valid) return corrected_interval;
   // Return the interval to wait
   return interval;
 }
@@ -3166,6 +3204,45 @@ void Stepper::init() {
     digipot_init();
   #endif
 }
+
+
+  void Stepper::set_vfa_amplitude(const AxisEnum axis, const_float_t amp) {
+    const bool was_on = hal.isr_state();
+    hal.isr_off();
+    if (axis == X_AXIS) vfa_x.amplitude = amp;
+    if (axis == Y_AXIS) vfa_y.amplitude = amp;
+    if (was_on) hal.isr_on();
+  }
+  void Stepper::set_vfa_phase(const AxisEnum axis, const_float_t phase) {
+    const bool was_on = hal.isr_state();
+    hal.isr_off();
+    if (axis == X_AXIS) vfa_x.phase = phase;
+    if (axis == Y_AXIS) vfa_y.phase = phase;
+    if (was_on) hal.isr_on();
+  }
+  void Stepper::set_vfa_width(const AxisEnum axis, const_float_t width) {
+    const bool was_on = hal.isr_state();
+    hal.isr_off();
+    if (axis == X_AXIS) vfa_x.width = width;
+    if (axis == Y_AXIS) vfa_y.width = width;
+    if (was_on) hal.isr_on();
+  }
+
+  float Stepper::get_vfa_amplitude(const AxisEnum axis) {
+    if (axis == X_AXIS) return vfa_x.amplitude;
+    if (axis == Y_AXIS) return vfa_y.amplitude;
+    return -1;
+  }
+  float Stepper::get_vfa_phase(const AxisEnum axis) {
+    if (axis == X_AXIS) return vfa_x.phase;
+    if (axis == Y_AXIS) return vfa_y.phase;
+    return -1;
+  }
+  float Stepper::get_vfa_width(const AxisEnum axis) {
+    if (axis == X_AXIS) return vfa_x.width;
+    if (axis == Y_AXIS) return vfa_y.width;
+    return -1;
+  }
 
 #if HAS_ZV_SHAPING
 

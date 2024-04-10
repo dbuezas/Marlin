@@ -284,6 +284,11 @@ constexpr ena_mask_t enable_overlap[] = {
   };
 
 #endif // HAS_ZV_SHAPING
+struct VfaParams {
+  float amplitude;
+  float phase;
+  float width;
+};
 
 #if ENABLED(NONLINEAR_EXTRUSION)
   typedef struct { float A, B, C; void reset() { A = B = 0.0f; C = 1.0f; } } ne_coeff_t;
@@ -421,6 +426,9 @@ class Stepper {
         static ShapeParams shaping_y;
       #endif
     #endif
+    static VfaParams vfa_x;
+    static VfaParams vfa_y;
+  
 
     #if ENABLED(LIN_ADVANCE)
       static constexpr hal_timer_t LA_ADV_NEVER = HAL_TIMER_TYPE_MAX;
@@ -455,13 +463,13 @@ class Stepper {
     // Exact steps at which an endstop was triggered
     static xyz_long_t endstops_trigsteps;
 
+  public:
     // Positions of stepper motors, in step units
     static xyze_long_t count_position;
 
     // Current stepper motor directions (+1 or -1)
     static xyze_int8_t count_direction;
 
-  public:
     // Initialize stepper hardware
     static void init();
 
@@ -665,6 +673,13 @@ class Stepper {
       // Set current position in steps when reset flag is set in M493 and planner already synchronized
       static void ftMotion_syncPosition();
     #endif
+
+    static void set_vfa_amplitude(const AxisEnum axis, const_float_t amp);
+    static void set_vfa_phase(const AxisEnum axis, const_float_t phase);
+    static void set_vfa_width(const AxisEnum axis, const_float_t width);
+    static float get_vfa_amplitude(const AxisEnum axis);
+    static float get_vfa_phase(const AxisEnum axis);
+    static float get_vfa_width(const AxisEnum axis);
 
     #if HAS_ZV_SHAPING
       static void set_shaping_damping_ratio(const AxisEnum axis, const_float_t zeta);
