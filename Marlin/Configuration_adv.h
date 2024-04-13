@@ -2222,7 +2222,7 @@
  * Display Sleep
  * Enable this option to save energy and prevent OLED pixel burn-in.
  */
-//#define DISPLAY_SLEEP_MINUTES 2       // (minutes) Timeout before turning off the screen
+#define DISPLAY_SLEEP_MINUTES 2       // (minutes) Timeout before turning off the screen
 
 /**
  * LCD Backlight Timeout
