@@ -1813,7 +1813,7 @@
  *  - Use a low value (i.e., Z_MIN_POS) if the nozzle falls down to the bed.
  *  - Use a large value (i.e., Z_MAX_POS) if the bed falls down, away from the nozzle.
  */
-//#define Z_IDLE_HEIGHT Z_HOME_POS
+#define Z_IDLE_HEIGHT Z_MAX_POS
 
 //#define Z_CLEARANCE_FOR_HOMING  4   // (mm) Minimal Z height before homing (G28) for Z clearance above the bed, clamps, ...
                                       // You'll need this much clearance above Z_MAX_POS to avoid grinding.
@@ -1842,7 +1842,8 @@
  */
 //#define X_SAFETY_STOP
 //#define Y_SAFETY_STOP
-//#define Z_SAFETY_STOP
+#define Z_SAFETY_STOP // defined so that the the z endstop is used even with a probe
+#define Z_MAX_PIN PC0
 //#define I_SAFETY_STOP
 //#define J_SAFETY_STOP
 //#define K_SAFETY_STOP
@@ -1853,8 +1854,8 @@
 // @section geometry
 
 // The size of the printable area
-#define X_BED_SIZE 219
-#define Y_BED_SIZE 210
+#define X_BED_SIZE 219 // 226
+#define Y_BED_SIZE 210 // 224
 
 // Travel limits (linear=mm, rotational=°) after homing, corresponding to endstop positions.
 #define X_MIN_POS 0
