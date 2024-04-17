@@ -2819,23 +2819,24 @@ hal_timer_t Stepper::block_phase_isr() {
   //  1 => 2
   xyze_float_t advance_dividend_f = (current_block->steps << 1).asFloat();
   
+  if (vfa_x.amplitude>0 || vfa_y.amplitude>0){
+    float x_proportion =  (float)advance_dividend.x /( (float)advance_dividend.x+(float)advance_dividend.y);
+    float y_proportion =  1-x_proportion;
 
-  float x_proportion =  (float)advance_dividend.x /( (float)advance_dividend.x+(float)advance_dividend.y);
-  float y_proportion =  1-x_proportion;
-
-  float correction_term = 
-    ((vfa_x.width>0) ?
-      (sin((count_position.x + vfa_x.phase*vfa_x.width) * 2 * PI / vfa_x.width) * vfa_x.amplitude/1000* x_proportion)
-      :0)
-    +
-    ((vfa_y.width>0) ?
-      (sin((count_position.y + vfa_y.phase*vfa_y.width) * 2 * PI / vfa_y.width) * vfa_y.amplitude/1000* y_proportion)
-      :0);
-  float want_speed = 1.0f/interval;
-  float corrected_speed = want_speed+correction_term;
-  uint32_t corrected_interval = 1/corrected_speed;
-  bool is_valid = corrected_interval == corrected_interval && corrected_interval>0;
-  if (is_valid) return corrected_interval;
+    float correction_term = 
+      ((vfa_x.width>0) ?
+        (sin((count_position.x + vfa_x.phase*vfa_x.width) * 2 * PI / vfa_x.width) * vfa_x.amplitude/100* x_proportion)
+        :0)
+      +
+      ((vfa_y.width>0) ?
+        (sin((count_position.y + vfa_y.phase*vfa_y.width) * 2 * PI / vfa_y.width) * vfa_y.amplitude/100* y_proportion)
+        :0);
+    float want_speed = 1.0f/interval;
+    float corrected_speed = want_speed+correction_term;
+    uint32_t corrected_interval = 1/corrected_speed;
+    bool is_valid = corrected_interval == corrected_interval && corrected_interval>0;
+    if (is_valid) return corrected_interval;
+  }
   // Return the interval to wait
   return interval;
 }
