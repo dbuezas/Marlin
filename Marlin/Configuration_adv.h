@@ -1216,6 +1216,9 @@
   #define SHAPING_MENU                // Add a menu to the LCD to set shaping parameters.
 #endif
 
+#define VFA_X
+#define VFA_Y
+
 // @section motion
 
 #define AXIS_RELATIVE_MODES { false, false, false, false }

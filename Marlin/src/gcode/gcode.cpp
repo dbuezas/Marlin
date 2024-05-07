@@ -950,6 +950,10 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
       #if HAS_ZV_SHAPING
         case 593: M593(); break;                                  // M593: Input Shaping control
       #endif
+      
+      #if HAS_VFA
+        case 594: M594(); break;                                  // M594: VFA control
+      #endif
 
       #if ENABLED(ADVANCED_PAUSE_FEATURE)
         case 600: M600(); break;                                  // M600: Pause for Filament Change

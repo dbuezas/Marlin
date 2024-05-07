@@ -1341,6 +1341,11 @@
   #define HAS_ZV_SHAPING 1
 #endif
 
+// Input shaping
+#if ANY(VFA_X, VFA_Y)
+  #define HAS_VFA 1
+#endif
+
 // FT Motion unified window and batch size
 #if ALL(FT_MOTION, FTM_UNIFIED_BWS)
   #define FTM_WINDOW_SIZE FTM_BW_SIZE

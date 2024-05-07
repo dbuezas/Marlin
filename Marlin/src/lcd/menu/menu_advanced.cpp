@@ -728,11 +728,15 @@ void menu_advanced_settings() {
     // M201 - Acceleration items
     SUBMENU(MSG_ACCELERATION, menu_advanced_acceleration);
 
-    // M593 - Acceleration items
+    // M593 - Input shaping items
     #if ENABLED(SHAPING_MENU)
       if (!is_busy) SUBMENU(MSG_INPUT_SHAPING, menu_advanced_input_shaping);
     #endif
-    SUBMENU(MSG_VFA, menu_advanced_vfa);
+
+    // M594 - VFA items
+    #if HAS_VFA
+      SUBMENU(MSG_VFA, menu_advanced_vfa);
+    #endif
 
     #if ENABLED(CLASSIC_JERK)
       // M205 - Max Jerk

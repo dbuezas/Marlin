@@ -261,6 +261,7 @@
  * M575 - Change the serial baud rate. (Requires BAUD_RATE_GCODE)
  * M592 - Get or set nonlinear extrusion parameters. (Requires NONLINEAR_EXTRUSION)
  * M593 - Get or set input shaping parameters. (Requires INPUT_SHAPING_[XY])
+ * M594 - Get or set vfa parameters. (Requires VFA_[XY])
  * M600 - Pause for filament change: "M600 X<pos> Y<pos> Z<raise> E<first_retract> L<later_retract>". (Requires ADVANCED_PAUSE_FEATURE)
  * M603 - Configure filament change: "M603 T<tool> U<unload_length> L<load_length>". (Requires ADVANCED_PAUSE_FEATURE)
  * M605 - Set Dual X-Carriage movement mode: "M605 S<mode> [X<x_offset>] [R<temp_offset>]". (Requires DUAL_X_CARRIAGE)
@@ -1126,6 +1127,11 @@ private:
   #if HAS_ZV_SHAPING
     static void M593();
     static void M593_report(const bool forReplay=true);
+  #endif
+
+  #if HAS_VFA
+    static void M594();
+    static void M594_report(const bool forReplay=true);
   #endif
 
   #if ENABLED(ADVANCED_PAUSE_FEATURE)

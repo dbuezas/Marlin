@@ -3933,6 +3933,11 @@ void MarlinSettings::reset() {
     // Input Shaping
     //
     TERN_(HAS_ZV_SHAPING, gcode.M593_report(forReplay));
+    
+    // //
+    // // VFA
+    // //
+    // TERN_(HAS_VFA, gcode.M594_report(forReplay));
 
     //
     // Hotend Idle Timeout
