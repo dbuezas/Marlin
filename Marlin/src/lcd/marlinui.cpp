@@ -209,10 +209,11 @@ constexpr uint8_t epps = ENCODER_PULSES_PER_STEP;
 
 #endif
 
-#if HAS_U8GLIB_I2C_OLED && PINS_EXIST(I2C_SCL, I2C_SDA) && DISABLED(SOFT_I2C_EEPROM)
+#if defined(DOGLCD_SDA) && defined(DOGLCD_SCL) 
+  #include <Wire.h>
+#elif HAS_U8GLIB_I2C_OLED && PINS_EXIST(I2C_SCL, I2C_SDA) && DISABLED(SOFT_I2C_EEPROM)
   #include <Wire.h>
 #endif
-
 // Encoder Handling
 #if HAS_ENCODER_ACTION
   uint32_t MarlinUI::encoderPosition;
@@ -258,7 +259,9 @@ constexpr uint8_t epps = ENCODER_PULSES_PER_STEP;
 
 void MarlinUI::init() {
 
-  #if HAS_U8GLIB_I2C_OLED && PINS_EXIST(I2C_SCL, I2C_SDA) && DISABLED(SOFT_I2C_EEPROM)
+  #if defined(DOGLCD_SDA) && defined(DOGLCD_SCL) 
+    Wire.begin(DOGLCD_SDA, DOGLCD_SCL);
+  #elif HAS_U8GLIB_I2C_OLED && PINS_EXIST(I2C_SCL, I2C_SDA) && DISABLED(SOFT_I2C_EEPROM)
     #ifdef TARGET_RP2040
       Wire.begin();  // RP2040 MbedI2C uses pins configured in pins_arduino.h
     #else
