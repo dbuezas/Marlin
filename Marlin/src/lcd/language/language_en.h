@@ -438,6 +438,9 @@ namespace LanguageNarrow_en {
   LSTR MSG_SINGLENOZZLE_PRIME_SPEED       = _UxGT("Prime Speed");
   LSTR MSG_SINGLENOZZLE_RETRACT_SPEED     = _UxGT("Retract Speed");
   LSTR MSG_NOZZLE_STANDBY                 = _UxGT("Nozzle Standby");
+  LSTR MSG_LOCK_FAN                       = _UxGT("Lock Fan");
+  LSTR MSG_UNLOCK_FAN                     = _UxGT("Unlock Fan");
+  LSTR MSG_FAN_MULTIPLIER                 = _UxGT("Fan Multiplier");
   LSTR MSG_FILAMENTLOAD                   = _UxGT("Load Filament");
   LSTR MSG_FILAMENTLOAD_E                 = _UxGT("Load * Filament");
   LSTR MSG_FILAMENTUNLOAD                 = _UxGT("Unload Filament");
