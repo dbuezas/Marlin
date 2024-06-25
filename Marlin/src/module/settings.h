@@ -64,12 +64,18 @@ class MarlinSettings {
     #if ENABLED(EEPROM_SETTINGS)
 
       static bool load();      // Return 'true' if data was loaded ok
+      static void load_contrast();
+      static void load_brightness();
+
       static bool validate();  // Return 'true' if EEPROM data is ok
+      
+      static uint8_t check_version();
 
       static void first_load() {
         static bool loaded = false;
         if (!loaded && load()) loaded = true;
       }
+      static bool quick_lcd_load(); 
 
       #if ENABLED(AUTO_BED_LEVELING_UBL) // Eventually make these available if any leveling system
                                          // That can store is enabled

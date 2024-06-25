@@ -1797,28 +1797,48 @@ void MarlinSettings::postprocess() {
     return success;
   }
 
+  uint8_t MarlinSettings::check_version() {
+    if (!EEPROM_START(EEPROM_OFFSET)) return 1;
+    char stored_ver[4];
+    EEPROM_READ_ALWAYS(stored_ver);
+    
+    // Version has to match or defaults are used
+    if (strncmp(version, stored_ver, 3) != 0) {
+      if (stored_ver[3] != '\0') {
+        stored_ver[0] = '?';
+        stored_ver[1] = '\0';
+      }
+      DEBUG_ECHO_MSG("EEPROM version mismatch (EEPROM=", stored_ver, " Marlin=" EEPROM_VERSION ")");
+      return 2;
+    }
+    return 0;
+  }
+
+  bool MarlinSettings::quick_lcd_load() {
+    if (check_version()) return false; 
+    TERN_(HAS_LCD_CONTRAST, load_contrast());
+    TERN_(HAS_LCD_CONTRAST, ui.refresh_contrast());
+    TERN_(HAS_LCD_BRIGHTNESS, load_brightness());
+    TERN_(HAS_LCD_BRIGHTNESS, ui.refresh_brightness());
+    return true;
+  }
+
   /**
    * M501 - Retrieve Configuration
    */
   EEPROM_Error MarlinSettings::_load() {
     EEPROM_Error eeprom_error = ERR_EEPROM_NOERR;
+    uint8_t check = check_version(); 
 
-    if (!EEPROM_START(EEPROM_OFFSET)) return eeprom_error;
-
-    char stored_ver[4];
-    EEPROM_READ_ALWAYS(stored_ver);
+    if (check == 1) return eeprom_error;
 
     uint16_t stored_crc;
 
     do { // A block to break out of on error
 
       // Version has to match or defaults are used
-      if (strncmp(version, stored_ver, 3) != 0) {
-        if (stored_ver[3] != '\0') {
-          stored_ver[0] = '?';
-          stored_ver[1] = '\0';
-        }
-        DEBUG_ECHO_MSG("EEPROM version mismatch (EEPROM=", stored_ver, " Marlin=" EEPROM_VERSION ")");
+      
+      if (check == 2) {
         eeprom_error = ERR_EEPROM_VERSION;
         break;
       }
@@ -2965,6 +2985,22 @@ void MarlinSettings::postprocess() {
     if (err) ui.eeprom_alert(err);
 
     return (err == ERR_EEPROM_NOERR);
+  }
+
+  void MarlinSettings::load_contrast() {
+    EEPROM_START(EEPROM_OFFSET+offsetof(SettingsData,lcd_contrast));
+    uint8_t lcd_contrast;
+    EEPROM_READ(lcd_contrast);
+    DEBUG_ECHOLNPGM("LCD Contrast: ", lcd_contrast);
+    TERN_(HAS_LCD_CONTRAST, ui.contrast = lcd_contrast);
+  }
+
+  void MarlinSettings::load_brightness() {
+    EEPROM_START(EEPROM_OFFSET+offsetof(SettingsData,lcd_brightness));
+    uint8_t lcd_brightness;
+    EEPROM_READ(lcd_brightness);
+    DEBUG_ECHOLNPGM("LCD Brightness: ", lcd_brightness);
+    TERN_(HAS_LCD_BRIGHTNESS, ui.brightness = lcd_brightness);
   }
 
   bool MarlinSettings::load() {
