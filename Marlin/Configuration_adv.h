@@ -3927,7 +3927,7 @@
  *
  * Note: Settings are not saved in EEPROM and will reset after a power cycle.
  */
-//#define FAN_MULTIPLIER
+#define FAN_MULTIPLIER
 
 /**
  * Auto-report temperatures with M155 S<seconds>
