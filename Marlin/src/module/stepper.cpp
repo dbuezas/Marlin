@@ -260,6 +260,10 @@ uint32_t Stepper::advance_divisor = 0,
               Stepper::la_dividend = 0,
               Stepper::la_advance_steps = 0;
   bool        Stepper::la_active = false;
+  #if ENABLED(LA_ZERO_SLOWDOWN)
+  float       Stepper::current_la_step_rate = 0;
+  float       Stepper::current_la_step_count = 0;
+  #endif
 #endif
 
 #if ENABLED(NONLINEAR_EXTRUSION)
@@ -305,6 +309,13 @@ hal_timer_t Stepper::ticks_nominal = 0;
 #if DISABLED(S_CURVE_ACCELERATION)
   uint32_t Stepper::acc_step_rate; // needed for deceleration start point
 #endif
+#if ENABLED(LA_ZERO_SLOWDOWN)
+  uint32_t Stepper::curr_step_rate; // needed for the new LA algo
+  float Stepper::a_max;
+  float Stepper::k;
+  float Stepper::xy_to_e_steps;
+  float Stepper::e_to_xy_steps;
+#endif     
 
 xyz_long_t Stepper::endstops_trigsteps;
 xyze_long_t Stepper::count_position{0};
@@ -2382,6 +2393,23 @@ void Stepper::set_axis_moved_for_current_block() {
   axis_did_move = didmove;
 }
 
+void Stepper::set_la_interval(int32_t rate){
+  if (rate == 0) {
+    la_interval = LA_ADV_NEVER;
+  } else {
+    const bool forward_e = rate > 0;
+    la_interval = calc_timer_interval(uint32_t(ABS(rate)) >> current_block->la_scaling);
+    if (forward_e != motor_direction(E_AXIS)) {
+      last_direction_bits.toggle(E_AXIS);
+      count_direction.e = -count_direction.e;
+      DIR_WAIT_BEFORE();
+      E_APPLY_DIR(forward_e, false);
+      TERN_(FTM_OPTIMIZE_DIR_STATES, last_set_direction = last_direction_bits);
+      DIR_WAIT_AFTER();
+    }
+  }
+}
+
 /**
  * This last phase of the stepper interrupt processes and properly
  * schedules planner blocks. This is executed after the step pulses
@@ -2456,13 +2484,6 @@ hal_timer_t Stepper::block_phase_isr() {
           calc_nonlinear_e(acc_step_rate << oversampling_factor);
         #endif
 
-        #if ENABLED(LIN_ADVANCE)
-          if (la_active) {
-            const uint32_t la_step_rate = la_advance_steps < current_block->max_adv_steps ? current_block->la_advance_rate : 0;
-            la_interval = calc_timer_interval((acc_step_rate + la_step_rate) >> current_block->la_scaling);
-          }
-        #endif
-
         /**
          * Adjust Laser Power - Accelerating
          *
@@ -2485,6 +2506,7 @@ hal_timer_t Stepper::block_phase_isr() {
             else cutter.apply_power(0);
           }
         #endif
+        curr_step_rate = acc_step_rate;
       }
       // Are we in Deceleration phase ?
       else if (step_events_completed >= decelerate_start) {
@@ -2521,31 +2543,6 @@ hal_timer_t Stepper::block_phase_isr() {
           calc_nonlinear_e(step_rate << oversampling_factor);
         #endif
 
-        #if ENABLED(LIN_ADVANCE)
-          if (la_active) {
-            const uint32_t la_step_rate = la_advance_steps > current_block->final_adv_steps ? current_block->la_advance_rate : 0;
-            if (la_step_rate != step_rate) {
-              const bool forward_e = la_step_rate < step_rate;
-              la_interval = calc_timer_interval((forward_e ? step_rate - la_step_rate : la_step_rate - step_rate) >> current_block->la_scaling);
-
-              if (forward_e != motor_direction(E_AXIS)) {
-                last_direction_bits.toggle(E_AXIS);
-                count_direction.e = -count_direction.e;
-
-                DIR_WAIT_BEFORE();
-
-                E_APPLY_DIR(forward_e, false);
-
-                TERN_(FTM_OPTIMIZE_DIR_STATES, last_set_direction = last_direction_bits);
-
-                DIR_WAIT_AFTER();
-              }
-            }
-            else
-              la_interval = LA_ADV_NEVER;
-          }
-        #endif // LIN_ADVANCE
-
         // Adjust Laser Power - Decelerating
         #if ENABLED(LASER_POWER_TRAP)
           if (cutter.cutter_mode == CUTTER_MODE_CONTINUOUS) {
@@ -2559,7 +2556,7 @@ hal_timer_t Stepper::block_phase_isr() {
             }
           }
         #endif
-
+        curr_step_rate = step_rate;
       }
       else {  // Must be in cruise phase otherwise
 
@@ -2569,15 +2566,11 @@ hal_timer_t Stepper::block_phase_isr() {
           ticks_nominal = calc_multistep_timer_interval(current_block->nominal_rate << oversampling_factor);
           // Prepare for deceleration
           IF_DISABLED(S_CURVE_ACCELERATION, acc_step_rate = current_block->nominal_rate);
+          curr_step_rate = current_block->nominal_rate;
           deceleration_time = ticks_nominal / 2;
 
           #if ENABLED(NONLINEAR_EXTRUSION)
             calc_nonlinear_e(current_block->nominal_rate << oversampling_factor);
-          #endif
-
-          #if ENABLED(LIN_ADVANCE)
-            if (la_active)
-              la_interval = calc_timer_interval(current_block->nominal_rate >> current_block->la_scaling);
           #endif
 
           // Adjust Laser Power - Cruise
@@ -2847,13 +2840,53 @@ hal_timer_t Stepper::block_phase_isr() {
       #endif
 
       #if ENABLED(LIN_ADVANCE)
-        if (la_active) {
-          const uint32_t la_step_rate = la_advance_steps < current_block->max_adv_steps ? current_block->la_advance_rate : 0;
-          la_interval = calc_timer_interval((current_block->initial_rate + la_step_rate) >> current_block->la_scaling);
-        }
+        curr_step_rate = current_block->initial_rate;
+        a_max = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
+        k = Planner::extruder_advance_K[E_INDEX_N(current_block->extruder)];
+        xy_to_e_steps = float(current_block->steps[E_AXIS]) / float(current_block->step_event_count);
+        e_to_xy_steps = 1.0f/xy_to_e_steps;
+      
       #endif
     }
   } // !current_block
+
+
+  #if ENABLED(LA_ZERO_SLOWDOWN)
+    if (la_active && current_block) {
+      // K = mm of filament compression needed per 1mm/s extrusion speed [mm/mm/s].
+      // K = steps of filament compression needed per 1steps/time extrusion speed [steps/steps/time].
+      
+      float e_step_rate = float(curr_step_rate) * xy_to_e_steps;
+      float dt = float(interval)/float(STEPPER_TIMER_RATE);
+      float dt_inv = 1.0f / dt; 
+
+      float target_la_step_count = k * e_step_rate;
+      float distance_to_target = target_la_step_count - current_la_step_count;
+
+      float one_shot_v = distance_to_target * dt_inv;
+      float a = ABS(one_shot_v - current_la_step_rate) * dt_inv;
+      a = a > a_max ? a_max : a;
+      
+      float stopping_distance = current_la_step_rate*current_la_step_rate / (2 * a_max);
+      
+      if (ABS(distance_to_target) <= stopping_distance){
+          // If we're within stopping distance, decelerate
+          a *= current_la_step_rate<0 ? 1 : -1;
+      }
+      else{
+          // Otherwise, accelerate towards the target
+          a *= distance_to_target<0 ? -1 : 1;
+      }
+
+      current_la_step_rate += a * dt;
+      current_la_step_count += current_la_step_rate * dt;
+
+      const int32_t la_step_rate = current_la_step_rate * e_to_xy_steps;
+      set_la_interval((int32_t)curr_step_rate + la_step_rate);
+    } else {
+      current_la_step_rate = 0; 
+    }
+  #endif
 
   // Return the interval to wait
   return interval;

@@ -2408,12 +2408,14 @@ bool Planner::_populate_block(
         if (e_D_ratio > 3.0f)
           use_advance_lead = false;
         else {
-          // Scale E acceleration so that it will be possible to jump to the advance speed.
-          const uint32_t max_accel_steps_per_s2 = MAX_E_JERK(extruder) / (extruder_advance_K[E_INDEX_N(extruder)] * e_D_ratio) * steps_per_mm;
-          if (accel > max_accel_steps_per_s2) {
-            accel = max_accel_steps_per_s2;
-            if (ENABLED(LA_DEBUG)) SERIAL_ECHOLNPGM("Acceleration limited.");
-          }
+          #if DISABLED(LA_ZERO_SLOWDOWN)
+            // Scale E acceleration so that it will be possible to jump to the advance speed.
+            const uint32_t max_accel_steps_per_s2 = MAX_E_JERK(extruder) / (extruder_advance_K[E_INDEX_N(extruder)] * e_D_ratio) * steps_per_mm;
+            if (accel > max_accel_steps_per_s2) {
+              accel = max_accel_steps_per_s2;
+              if (ENABLED(LA_DEBUG)) SERIAL_ECHOLNPGM("Acceleration limited.");
+            }
+          #endif
         }
       }
     #endif
