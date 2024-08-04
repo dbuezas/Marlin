@@ -261,8 +261,9 @@ uint32_t Stepper::advance_divisor = 0,
               Stepper::la_advance_steps = 0;
   bool        Stepper::la_active = false;
   #if ENABLED(LA_ZERO_SLOWDOWN)
-  float       Stepper::current_la_step_rate = 0;
-  float       Stepper::current_la_step_count = 0;
+  uint8_t     Stepper::curr_la_block_i = 0;
+  uint32_t    Stepper::curr_time = 0;
+  uint32_t    Stepper::e_acc_max;
   #endif
 #endif
 
@@ -309,13 +310,6 @@ hal_timer_t Stepper::ticks_nominal = 0;
 #if DISABLED(S_CURVE_ACCELERATION)
   uint32_t Stepper::acc_step_rate; // needed for deceleration start point
 #endif
-#if ENABLED(LA_ZERO_SLOWDOWN)
-  uint32_t Stepper::curr_step_rate; // needed for the new LA algo
-  float Stepper::a_max;
-  float Stepper::k;
-  float Stepper::xy_to_e_steps;
-  float Stepper::e_to_xy_steps;
-#endif     
 
 xyz_long_t Stepper::endstops_trigsteps;
 xyze_long_t Stepper::count_position{0};
@@ -2432,7 +2426,7 @@ hal_timer_t Stepper::block_phase_isr() {
 
   // If no queued movements, just wait 1ms for the next block
   hal_timer_t interval = (STEPPER_TIMER_RATE) / 1000UL;
-
+  uint32_t curr_step_rate;
   // If there is a current block
   if (current_block) {
     // If current block is finished, reset pointer and finalize state
@@ -2841,11 +2835,13 @@ hal_timer_t Stepper::block_phase_isr() {
 
       #if ENABLED(LIN_ADVANCE)
         curr_step_rate = current_block->initial_rate;
-        a_max = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
-        k = Planner::extruder_advance_K[E_INDEX_N(current_block->extruder)];
-        xy_to_e_steps = float(current_block->steps[E_AXIS]) / float(current_block->step_event_count);
-        e_to_xy_steps = 1.0f/xy_to_e_steps;
-      
+        curr_la_block_i = 0;
+        curr_time = 0;
+        float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
+
+        // TODO: this is an expensive calculation, maybe e_acc_max should be pre computed in the la_block?
+        float e_to_xy_steps = float(current_block->step_event_count) / float(current_block->steps[E_AXIS]);
+        e_acc_max = (uint32_t)(acc * e_to_xy_steps * (float(1UL << 24) / (STEPPER_TIMER_RATE)));
       #endif
     }
   } // !current_block
@@ -2853,38 +2849,14 @@ hal_timer_t Stepper::block_phase_isr() {
 
   #if ENABLED(LA_ZERO_SLOWDOWN)
     if (la_active && current_block) {
-      // K = mm of filament compression needed per 1mm/s extrusion speed [mm/mm/s].
-      // K = steps of filament compression needed per 1steps/time extrusion speed [steps/steps/time].
+      // TODO: if curr_time oversampled?
       
-      float e_step_rate = float(curr_step_rate) * xy_to_e_steps;
-      float dt = float(interval)/float(STEPPER_TIMER_RATE);
-      float dt_inv = 1.0f / dt; 
-
-      float target_la_step_count = k * e_step_rate;
-      float distance_to_target = target_la_step_count - current_la_step_count;
-
-      float one_shot_v = distance_to_target * dt_inv;
-      float a = ABS(one_shot_v - current_la_step_rate) * dt_inv;
-      a = a > a_max ? a_max : a;
-      
-      float stopping_distance = current_la_step_rate*current_la_step_rate / (2 * a_max);
-      
-      if (ABS(distance_to_target) <= stopping_distance){
-          // If we're within stopping distance, decelerate
-          a *= current_la_step_rate<0 ? 1 : -1;
-      }
-      else{
-          // Otherwise, accelerate towards the target
-          a *= distance_to_target<0 ? -1 : 1;
-      }
-
-      current_la_step_rate += a * dt;
-      current_la_step_count += current_la_step_rate * dt;
-
-      const int32_t la_step_rate = current_la_step_rate * e_to_xy_steps;
+      while (curr_time > current_block->la_block[curr_la_block_i].t) curr_la_block_i++;
+      la_block_t *la_block = &current_block->la_block[curr_la_block_i];
+      uint32_t dt = (curr_time - la_block->t);
+      int32_t la_step_rate = la_block->v + STEP_MULTIPLY(dt, e_acc_max) * la_block->d;
       set_la_interval((int32_t)curr_step_rate + la_step_rate);
-    } else {
-      current_la_step_rate = 0; 
+      curr_time += interval;
     }
   #endif
 

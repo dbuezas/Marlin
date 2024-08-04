@@ -439,10 +439,11 @@ class Stepper {
                          la_advance_steps; // Count of steps added to increase nozzle pressure
       static bool        la_active;        // Whether linear advance is used on the present segment.
       #if ENABLED(LA_ZERO_SLOWDOWN)
-        static float     current_la_step_rate;         // Current (gradually changing) linear advance rate
-        static float     current_la_step_count;        // Currently advanced steps
+        static void set_la_interval(int32_t rate);
+        static uint8_t curr_la_block_i; // needed for new la algo
+        static uint32_t curr_time; // needed for new la algo
+        static uint32_t e_acc_max;
       #endif
-      static void set_la_interval(int32_t rate);
     #endif
 
     #if ENABLED(NONLINEAR_EXTRUSION)
@@ -463,15 +464,7 @@ class Stepper {
     static hal_timer_t ticks_nominal;
     #if DISABLED(S_CURVE_ACCELERATION)
       static uint32_t acc_step_rate; // needed for deceleration start point
-    #endif
-    #if ENABLED(LA_ZERO_SLOWDOWN)
-      static uint32_t curr_step_rate; // needed for new la algo
-      static float a_max;
-      static float k;
-      static float xy_to_e_steps;
-      static float e_to_xy_steps;
-    #endif
-      
+    #endif      
 
     // Exact steps at which an endstop was triggered
     static xyz_long_t endstops_trigsteps;

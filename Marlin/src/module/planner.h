@@ -78,6 +78,10 @@
   #include "../feature/closedloop.h"
 #endif
 
+#if ENABLED(LA_ZERO_SLOWDOWN)
+  #include "planner_lin_adv_struct.h"
+#endif
+
 // Feedrate for manual moves
 #ifdef MANUAL_FEEDRATE
   constexpr xyze_feedrate_t manual_feedrate_mm_m = MANUAL_FEEDRATE,
@@ -297,6 +301,10 @@ typedef struct PlannerBlock {
   #endif
 
   void reset() { memset((char*)this, 0, sizeof(*this)); }
+
+  #if ENABLED(LA_ZERO_SLOWDOWN)
+    la_block_t la_block[9];
+  #endif
 
 } block_t;
 
@@ -1081,7 +1089,7 @@ class Planner {
       }
     #endif
 
-    static void calculate_trapezoid_for_block(block_t * const block, const_float_t entry_speed, const_float_t exit_speed);
+    static void calculate_trapezoid_for_block(block_t * const block, const_float_t entry_speed, const_float_t exit_speed, block_t * const prev_block);
 
     static bool reverse_pass_kernel(block_t * const current, const block_t * const next, const_float_t safe_exit_speed_sqr);
     static void forward_pass_kernel(const block_t * const previous, block_t * const current);

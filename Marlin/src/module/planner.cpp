@@ -113,6 +113,10 @@
   #include "../feature/spindle_laser.h"
 #endif
 
+#if ENABLED(LA_ZERO_SLOWDOWN)
+  #include "planner_lin_adv.h"
+#endif
+
 // Delay for delivery of first block to the stepper ISR, if the queue contains 2 or
 // fewer movements. The delay is measured in milliseconds, and must be less than 250ms
 #define BLOCK_DELAY_NONE         0U
@@ -788,7 +792,7 @@ block_t* Planner::get_current_block() {
  * NOT BUSY and it is marked as RECALCULATE. That WARRANTIES the Stepper ISR
  * is not and will not use the block while we modify it.
  */
-void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t entry_speed, const_float_t exit_speed) {
+void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t entry_speed, const_float_t exit_speed, block_t * const prev_block) {
 
   const float spmm = block->steps_per_mm;
   uint32_t initial_rate = entry_speed ? LROUND(entry_speed * spmm) : block->initial_rate,
@@ -868,6 +872,22 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
       const float comp = extruder_advance_K[E_INDEX_N(block->extruder)] * block->steps.e / block->step_event_count;
       block->max_adv_steps = cruise_rate * comp;
       block->final_adv_steps = final_rate * comp;
+        
+      const float xy_to_e = float(block->steps[E_AXIS]) / float(block->step_event_count);
+      const float k = extruder_advance_K[E_INDEX_N(current_block->extruder)];
+      const float eAccMax = planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)];
+      // TODO: I think I could just past the comp variable.
+      float last_exit_speed;
+      if (prev_block) {
+        const float prev_xy_to_e = float(block->steps[E_AXIS]) / float(block->step_event_count);
+        last_exit_speed = prev_block->final_rate * prev_xy_to_e / xy_to_e;
+      } else {
+        // TODO: this is bad, the jerk difference will be lost and result in blobs or gaps
+        last_exit_speed = block->initial_rate;
+      }
+      uint8_t len = computeProfile(last_exit_speed, block, k, eAccMax, block->la_block);
+      // if (len>9) OH NO
+      
     }
   #endif
 
@@ -1094,7 +1114,7 @@ void Planner::recalculate_trapezoids(const_float_t safe_exit_speed_sqr) {
   uint8_t block_index = block_buffer_tail,
           head_block_index = block_buffer_head;
 
-  block_t *block = nullptr, *next = nullptr;
+  block_t *prev = nullptr, *block = nullptr, *next = nullptr;
   float next_entry_speed = 0.0f;
   while (block_index != head_block_index) {
 
@@ -1134,8 +1154,10 @@ void Planner::recalculate_trapezoids(const_float_t safe_exit_speed_sqr) {
 
             const float current_entry_speed = next_entry_speed;
             next_entry_speed = SQRT(next->entry_speed_sqr);
-
-            calculate_trapezoid_for_block(block, current_entry_speed, next_entry_speed);
+            
+            // I have to modify the LA planner to match nozzle pressure with next block instead of prev
+            // for now, hacked access to prev
+            calculate_trapezoid_for_block(block, current_entry_speed, next_entry_speed, prev);
           }
 
           // Reset current only to ensure next trapezoid is computed - The
@@ -1143,8 +1165,9 @@ void Planner::recalculate_trapezoids(const_float_t safe_exit_speed_sqr) {
           block->flag.recalculate = false;
         }
       }
-
+      prev = block;
       block = next;
+      uint32_t prev_exit_rate = block->final_rate;
     }
 
     block_index = next_block_index(block_index);
@@ -1155,7 +1178,7 @@ void Planner::recalculate_trapezoids(const_float_t safe_exit_speed_sqr) {
     const float current_entry_speed = next_entry_speed;
     next_entry_speed = SQRT(safe_exit_speed_sqr);
 
-    calculate_trapezoid_for_block(block, current_entry_speed, next_entry_speed);
+    calculate_trapezoid_for_block(block, current_entry_speed, next_entry_speed, prev);
 
     // Reset block to ensure its trapezoid is computed - The stepper is free to use
     // the block from now on.
