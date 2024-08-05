@@ -868,15 +868,15 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
   block->final_rate = final_rate;
 
   #if ENABLED(LIN_ADVANCE)
-    if (block->la_advance_rate) {
+    if (block->la_advance_rate && block->steps.e) {
       const float comp = extruder_advance_K[E_INDEX_N(block->extruder)] * block->steps.e / block->step_event_count;
       block->max_adv_steps = cruise_rate * comp;
       block->final_adv_steps = final_rate * comp;
         
       const float e_to_xy_steps = float(block->step_event_count) / float(block->steps[E_AXIS]);
       const float k = extruder_advance_K[E_INDEX_N(current_block->extruder)];
-      float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
-      float e_acc_max = acc * e_to_xy_steps / (STEPPER_TIMER_RATE);
+      float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(block->extruder)]);
+      float e_acc_max = acc * e_to_xy_steps;
     
       // TODO: I think I could just past the comp variable.
       float last_exit_speed;
@@ -885,25 +885,25 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
         last_exit_speed = prev_block->final_rate * prev_xy_to_e * e_to_xy_steps;
       } else {
         // TODO: this is bad, the jerk difference will be lost and result in blobs or gaps
-        last_exit_speed = block->initial_rate;
+        last_exit_speed = 0;
       }
-      // SERIAL_ECHOLNPGM(
-      //   "§les:", last_exit_speed,
-      //   "\tir:", block->initial_rate,
-      //   "\tk:", k,
-      //   "\team:", e_acc_max,
-      //   "\tab:", block->accelerate_before,
-      //   "\tds:", block->decelerate_start,
-      //   "\tsec:", block->step_event_count);
+      SERIAL_ECHOLNPGM(
+        "§les:", last_exit_speed,
+        "\tir:", block->initial_rate,
+        "\tk:", k,
+        "\team:", e_acc_max,
+        "\tab:", block->accelerate_before,
+        "\tds:", block->decelerate_start,
+        "\tsec:", block->step_event_count);
 
       uint8_t len = computeProfile(last_exit_speed, block, k, e_acc_max, block->la_block);
-      // SERIAL_ECHOLNPGM("§len", len);
-      // for (int i = 0; i< len; i++) SERIAL_ECHOLNPGM(
-      //   "§i:", i,
-      //   "\tt:", block->la_block[i].t,
-      //   "\tv:", block->la_block[i].v,
-      //   "\td:", block->la_block[i].d
-      // );
+      SERIAL_ECHOLNPGM("§len", len);
+      for (int i = 0; i< len; i++) SERIAL_ECHOLNPGM(
+        "§i:", i,
+        "\tt:", block->la_block[i].t,
+        "\tv:", block->la_block[i].v,
+        "\td:", block->la_block[i].d
+      );
       // if (len>9) OH NO
       
     }
