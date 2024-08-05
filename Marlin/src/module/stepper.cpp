@@ -2852,7 +2852,7 @@ hal_timer_t Stepper::block_phase_isr() {
       while (curr_la_block_i < 8 && curr_time > current_block->la_block[curr_la_block_i].t) {
         curr_la_block_i++;
       }
-      if (curr_time > current_block->la_block[curr_la_block_i].t) SERIAL_ECHOLNPGM("§ curr_la_block_i == 9!!!!");
+      // if (curr_time > current_block->la_block[curr_la_block_i].t) SERIAL_ECHOLNPGM("§ curr_la_block_i == 9!!!!");
       la_block_t *la_block = &current_block->la_block[curr_la_block_i];
       uint32_t dt = (curr_time - la_block->t);
       int32_t la_step_rate = la_block->v + STEP_MULTIPLY(dt, e_acc_max) * la_block->d;
