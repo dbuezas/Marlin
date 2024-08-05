@@ -873,19 +873,37 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
       block->max_adv_steps = cruise_rate * comp;
       block->final_adv_steps = final_rate * comp;
         
-      const float xy_to_e = float(block->steps[E_AXIS]) / float(block->step_event_count);
+      const float e_to_xy_steps = float(block->step_event_count) / float(block->steps[E_AXIS]);
       const float k = extruder_advance_K[E_INDEX_N(current_block->extruder)];
-      const float eAccMax = planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)];
+      float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
+      float e_acc_max = acc * e_to_xy_steps / (STEPPER_TIMER_RATE);
+    
       // TODO: I think I could just past the comp variable.
       float last_exit_speed;
       if (prev_block) {
-        const float prev_xy_to_e = float(block->steps[E_AXIS]) / float(block->step_event_count);
-        last_exit_speed = prev_block->final_rate * prev_xy_to_e / xy_to_e;
+        const float prev_xy_to_e = float(prev_block->steps[E_AXIS]) / float(prev_block->step_event_count);
+        last_exit_speed = prev_block->final_rate * prev_xy_to_e * e_to_xy_steps;
       } else {
         // TODO: this is bad, the jerk difference will be lost and result in blobs or gaps
         last_exit_speed = block->initial_rate;
       }
-      uint8_t len = computeProfile(last_exit_speed, block, k, eAccMax, block->la_block);
+      // SERIAL_ECHOLNPGM(
+      //   "§les:", last_exit_speed,
+      //   "\tir:", block->initial_rate,
+      //   "\tk:", k,
+      //   "\team:", e_acc_max,
+      //   "\tab:", block->accelerate_before,
+      //   "\tds:", block->decelerate_start,
+      //   "\tsec:", block->step_event_count);
+
+      uint8_t len = computeProfile(last_exit_speed, block, k, e_acc_max, block->la_block);
+      // SERIAL_ECHOLNPGM("§len", len);
+      // for (int i = 0; i< len; i++) SERIAL_ECHOLNPGM(
+      //   "§i:", i,
+      //   "\tt:", block->la_block[i].t,
+      //   "\tv:", block->la_block[i].v,
+      //   "\td:", block->la_block[i].d
+      // );
       // if (len>9) OH NO
       
     }

@@ -2837,9 +2837,8 @@ hal_timer_t Stepper::block_phase_isr() {
         curr_step_rate = current_block->initial_rate;
         curr_la_block_i = 0;
         curr_time = 0;
-        float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
-
         // TODO: this is an expensive calculation, maybe e_acc_max should be pre computed in the la_block?
+        float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
         float e_to_xy_steps = float(current_block->step_event_count) / float(current_block->steps[E_AXIS]);
         e_acc_max = (uint32_t)(acc * e_to_xy_steps * (float(1UL << 24) / (STEPPER_TIMER_RATE)));
       #endif
