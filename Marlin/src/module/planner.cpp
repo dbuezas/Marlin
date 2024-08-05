@@ -896,16 +896,20 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
         "\tds:", block->decelerate_start,
         "\tsec:", block->step_event_count);
 
-      uint8_t len = computeProfile(last_exit_speed, block, k, e_acc_max, block->la_block);
+      int8_t len = computeProfile(last_exit_speed, block, k, e_acc_max, block->la_block);
       SERIAL_ECHOLNPGM("§len", len);
-      for (int i = 0; i< len; i++) SERIAL_ECHOLNPGM(
-        "§i:", i,
-        "\tt:", block->la_block[i].t,
-        "\tv:", block->la_block[i].v,
-        "\td:", block->la_block[i].d
-      );
       // if (len>9) OH NO
-      
+      if (len==-1) block->la_block[0] = {(float)block->step_event_count*2, 0, 0};
+      else {
+        for (int i = 0; i< len; i++) SERIAL_ECHOLNPGM(
+          "§i:", i,
+          "\tt:", block->la_block[i].t,
+          "\tv:", block->la_block[i].v,
+          "\td:", block->la_block[i].d
+        );
+      }
+    } else {
+      block->la_block[0] = {(float)block->step_event_count*2,0, 0};
     }
   #endif
 

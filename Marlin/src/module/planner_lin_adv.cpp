@@ -65,11 +65,11 @@ int32_t calc_best_effort(la_block_t* la_blocks, float_t p0_delta, float_t a, flo
   return 3;
 }
 
-enum Part {
-  START,
-  L_SLOPE,
-  CRUISE,
-  R_SLOPE
+enum class Part {
+    START,
+    L_SLOPE,
+    CRUISE,
+    R_SLOPE
 };
 
 int8_t solve(Part curr, la_block_t* la_blocks, int8_t len, block_t* block, float_t p0_delta, float_t v_target, float_t a, float_t a_inv) {
@@ -147,7 +147,8 @@ int8_t solve(Part curr, la_block_t* la_blocks, int8_t len, block_t* block, float
 
 int8_t computeProfile(float_t last_exit_speed, block_t* block, float_t k, float_t eAccMax, la_block_t* la_blocks) {
   if (block->accelerate_before < 0 || block->accelerate_before > block->step_event_count || block->accelerate_before > block->decelerate_start || block->decelerate_start < 0 || block->decelerate_start > block->step_event_count) {
-    SERIAL_ECHOLNPGM("BAD BLOCK!!!");
+    SERIAL_ECHOLNPGM("&BAD BLOCK!!!");
+    return -1;
   }
 
   float_t p0_target = block->initial_rate * k;
