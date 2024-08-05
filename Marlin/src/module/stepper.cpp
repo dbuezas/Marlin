@@ -2560,7 +2560,6 @@ hal_timer_t Stepper::block_phase_isr() {
           ticks_nominal = calc_multistep_timer_interval(current_block->nominal_rate << oversampling_factor);
           // Prepare for deceleration
           IF_DISABLED(S_CURVE_ACCELERATION, acc_step_rate = current_block->nominal_rate);
-          curr_step_rate = current_block->nominal_rate;
           deceleration_time = ticks_nominal / 2;
 
           #if ENABLED(NONLINEAR_EXTRUSION)
@@ -2581,7 +2580,7 @@ hal_timer_t Stepper::block_phase_isr() {
             }
           #endif
         }
-
+        curr_step_rate = current_block->nominal_rate;
         // The timer interval is just the nominal value for the nominal speed
         interval = ticks_nominal;
       }

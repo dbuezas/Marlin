@@ -868,11 +868,12 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
   block->final_rate = final_rate;
 
   #if ENABLED(LIN_ADVANCE)
-    if (block->la_advance_rate && block->steps.e) {
+    if (block->la_advance_rate) {
       const float comp = extruder_advance_K[E_INDEX_N(block->extruder)] * block->steps.e / block->step_event_count;
       block->max_adv_steps = cruise_rate * comp;
       block->final_adv_steps = final_rate * comp;
-        
+    }
+    if (block->la_advance_rate) {
       const float e_to_xy_steps = float(block->step_event_count) / float(block->steps[E_AXIS]);
       const float k = extruder_advance_K[E_INDEX_N(current_block->extruder)];
       float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(block->extruder)]);
