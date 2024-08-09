@@ -441,8 +441,9 @@ class Stepper {
       #if ENABLED(LA_ZERO_SLOWDOWN)
         static void set_la_interval(int32_t rate);
         static uint8_t curr_la_block_i; // needed for new la algo
-        static uint32_t curr_time; // needed for new la algo
+        static float curr_time_secs; // needed for new la algo
         static float e_acc_max; // in steps/s2
+        static uint32_t curr_step_rate; // to communicate betweeen the block isr and the zero_slowdown_la_isr
       #endif
     #endif
 

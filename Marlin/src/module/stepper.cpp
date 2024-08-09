@@ -261,9 +261,10 @@ uint32_t Stepper::advance_divisor = 0,
               Stepper::la_advance_steps = 0;
   bool        Stepper::la_active = false;
   #if ENABLED(LA_ZERO_SLOWDOWN)
-  uint8_t     Stepper::curr_la_block_i = 0;
-  uint32_t    Stepper::curr_time = 0;
+  uint8_t     Stepper::curr_la_block_i;
+  float    Stepper::curr_time_secs;
   float    Stepper::e_acc_max;
+  uint32_t Stepper::curr_step_rate;
   #endif
 #endif
 
@@ -1597,6 +1598,27 @@ void Stepper::isr() {
       // ^== Time critical. NOTHING besides pulse generation should be above here!!!
 
       if (!nextMainISR) nextMainISR = block_phase_isr();  // Manage acc/deceleration, get next block
+      #define slowdownISR_interval (STEPPER_TIMER_RATE/1000)
+      static uint32_t nextZeroSlowdownISR = 0;
+      #if ENABLED(LA_ZERO_SLOWDOWN)
+        if (!nextZeroSlowdownISR) {
+          nextZeroSlowdownISR = slowdownISR_interval;
+          // TODO: now this runs on every la step, how often should it run actually?
+          // Since this changes the la rate, it should probably depend on how much it is accelerating?
+          if (la_active && current_block) {
+            while (curr_time_secs > current_block->la_block[curr_la_block_i].t) {
+              curr_la_block_i++;
+            }
+            float t0 = curr_la_block_i==0 ? 0: current_block->la_block[curr_la_block_i-1].t;
+            float d = current_block->la_block[curr_la_block_i].d;
+            float v0 = curr_la_block_i==0 ? 0: current_block->la_block[curr_la_block_i-1].v;
+            float delta_t = curr_time_secs - t0;
+            float la_step_rate = v0 + delta_t * e_acc_max * d;
+            set_la_interval((int32_t)curr_step_rate + la_step_rate);
+            curr_time_secs += float(slowdownISR_interval)/float(STEPPER_TIMER_RATE);
+          }
+        }
+      #endif
 
       #if ENABLED(BABYSTEPPING)
         if (is_babystep)                                  // Avoid ANY stepping too soon after baby-stepping
@@ -1613,7 +1635,7 @@ void Stepper::isr() {
       TERN_(INPUT_SHAPING_Z, NOMORE(interval, ShapingQueue::peek_z()));   // Time until next input shaping echo for Z
       TERN_(LIN_ADVANCE, NOMORE(interval, nextAdvanceISR));               // Come back early for Linear Advance?
       TERN_(BABYSTEPPING, NOMORE(interval, nextBabystepISR));             // Come back early for Babystepping?
-
+      NOMORE(interval, nextZeroSlowdownISR);
       //
       // Compute remaining time for each ISR phase
       //     NEVER : The phase is idle
@@ -1625,7 +1647,7 @@ void Stepper::isr() {
       TERN_(HAS_ZV_SHAPING, ShapingQueue::decrement_delays(interval));
       TERN_(LIN_ADVANCE, if (nextAdvanceISR != LA_ADV_NEVER) nextAdvanceISR -= interval);
       TERN_(BABYSTEPPING, if (nextBabystepISR != BABYSTEP_NEVER) nextBabystepISR -= interval);
-
+      nextZeroSlowdownISR -= interval;
     } // standard motion control
 
     /**
@@ -2426,7 +2448,7 @@ hal_timer_t Stepper::block_phase_isr() {
 
   // If no queued movements, just wait 1ms for the next block
   hal_timer_t interval = (STEPPER_TIMER_RATE) / 1000UL;
-  uint32_t curr_step_rate;
+  
   // If there is a current block
   if (current_block) {
     // If current block is finished, reset pointer and finalize state
@@ -2579,8 +2601,8 @@ hal_timer_t Stepper::block_phase_isr() {
               else cutter.apply_power(0);
             }
           #endif
+          curr_step_rate = current_block->nominal_rate;
         }
-        curr_step_rate = current_block->nominal_rate;
         // The timer interval is just the nominal value for the nominal speed
         interval = ticks_nominal;
       }
@@ -2835,7 +2857,7 @@ hal_timer_t Stepper::block_phase_isr() {
       #if ENABLED(LIN_ADVANCE)
         curr_step_rate = current_block->initial_rate;
         curr_la_block_i = 0;
-        curr_time = 0;
+        curr_time_secs = 0;
         // TODO: this is an expensive calculation, maybe e_acc_max should be pre computed in the la_block?
         float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
         float e_to_xy_steps = float(current_block->step_event_count) / float(current_block->steps[E_AXIS]);
@@ -2843,28 +2865,6 @@ hal_timer_t Stepper::block_phase_isr() {
       #endif
     }
   } // !current_block
-
-
-  #if ENABLED(LA_ZERO_SLOWDOWN)
-    if (la_active && current_block) {
-      while (curr_time > current_block->la_block[curr_la_block_i].t * STEPPER_TIMER_RATE) {
-        curr_la_block_i++;
-      }
-      // if (curr_time > current_block->la_block[curr_la_block_i].t) SERIAL_ECHOLNPGM("§ curr_la_block_i == 9!!!!");
-      float t0 = curr_la_block_i==0 ? 0: current_block->la_block[curr_la_block_i-1].t;
-      float d = current_block->la_block[curr_la_block_i].d;
-      float v0 = curr_la_block_i==0 ? 0: current_block->la_block[curr_la_block_i-1].v;
-      float dt = (float(curr_time)/STEPPER_TIMER_RATE - t0);
-      float la_step_rate = v0 + dt * e_acc_max * d;
-      set_la_interval((int32_t)curr_step_rate + la_step_rate);
-      curr_time += interval;
-      /* Ideas:
-          * Serial the final curr_time value to contrast against the la_plan end
-          * Reconstruir js simulator con input igual a marlin
-          * checker
-      */
-    }
-  #endif
 
   // Return the interval to wait
   return interval;

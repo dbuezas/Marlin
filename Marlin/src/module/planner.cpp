@@ -733,6 +733,8 @@ void Planner::init() {
   #endif
 #endif
 
+
+
 /**
  * Get the current block for processing
  * and mark the block as busy.
@@ -884,7 +886,9 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
       if (prev_block) {
         const float prev_xy_to_e = float(prev_block->steps[E_AXIS]) / float(prev_block->step_event_count);
         last_exit_speed = prev_block->final_rate * prev_xy_to_e * e_to_xy_steps;
-        // last_exit_speed = block->initial_rate;
+        // float cruise_v = v_from_dist(prev_block->initial_rate, prev_block->accelerate_before, prev_block->acceleration_steps_per_s2);
+        // last_exit_speed = v_from_dist(cruise_v, prev_block->step_event_count-prev_block->decelerate_start, -prev_block->acceleration_steps_per_s2);
+        // last_exit_speed = last_exit_speed * prev_xy_to_e * e_to_xy_steps;
       } else {
         // TODO: this is bad, the jerk difference will be lost and result in blobs or gaps
         last_exit_speed = block->initial_rate;
@@ -1187,6 +1191,7 @@ void Planner::recalculate_trapezoids(const_float_t safe_exit_speed_sqr) {
             // I have to modify the LA planner to match nozzle pressure with next block instead of prev
             // for now, hacked access to prev
             calculate_trapezoid_for_block(block, current_entry_speed, next_entry_speed, prev);
+            prev = block;
           }
 
           // Reset current only to ensure next trapezoid is computed - The
@@ -1194,7 +1199,7 @@ void Planner::recalculate_trapezoids(const_float_t safe_exit_speed_sqr) {
           block->flag.recalculate = false;
         }
       }
-      prev = block;
+      // prev = block;
       block = next;
       uint32_t prev_exit_rate = block->final_rate;
     }
@@ -1208,6 +1213,7 @@ void Planner::recalculate_trapezoids(const_float_t safe_exit_speed_sqr) {
     next_entry_speed = SQRT(safe_exit_speed_sqr);
 
     calculate_trapezoid_for_block(block, current_entry_speed, next_entry_speed, prev);
+    prev = block;
 
     // Reset block to ensure its trapezoid is computed - The stepper is free to use
     // the block from now on.
