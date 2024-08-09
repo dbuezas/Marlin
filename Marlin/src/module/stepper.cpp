@@ -263,7 +263,7 @@ uint32_t Stepper::advance_divisor = 0,
   #if ENABLED(LA_ZERO_SLOWDOWN)
   uint8_t     Stepper::curr_la_block_i = 0;
   uint32_t    Stepper::curr_time = 0;
-  uint32_t    Stepper::e_acc_max;
+  float    Stepper::e_acc_max;
   #endif
 #endif
 
@@ -2839,7 +2839,7 @@ hal_timer_t Stepper::block_phase_isr() {
         // TODO: this is an expensive calculation, maybe e_acc_max should be pre computed in the la_block?
         float acc = float(planner.max_acceleration_steps_per_s2[E_AXIS + E_INDEX_N(extruder)]);
         float e_to_xy_steps = float(current_block->step_event_count) / float(current_block->steps[E_AXIS]);
-        e_acc_max = (uint32_t)(acc * e_to_xy_steps * (float(1UL << 24) / (STEPPER_TIMER_RATE)));
+        e_acc_max = acc * e_to_xy_steps;
       #endif
     }
   } // !current_block
@@ -2847,18 +2847,22 @@ hal_timer_t Stepper::block_phase_isr() {
 
   #if ENABLED(LA_ZERO_SLOWDOWN)
     if (la_active && current_block) {
-      // TODO: if curr_time oversampled?
-      
-      while (curr_la_block_i < 8 && curr_time > current_block->la_block[curr_la_block_i].t) {
+      while (curr_time > current_block->la_block[curr_la_block_i].t * STEPPER_TIMER_RATE) {
         curr_la_block_i++;
       }
       // if (curr_time > current_block->la_block[curr_la_block_i].t) SERIAL_ECHOLNPGM("§ curr_la_block_i == 9!!!!");
-      la_block_t *la_block = &current_block->la_block[curr_la_block_i];
-      uint32_t dt = (curr_time - la_block->t);
-      int32_t la_step_rate = la_block->v + STEP_MULTIPLY(dt, e_acc_max) * la_block->d;
+      float t0 = curr_la_block_i==0 ? 0: current_block->la_block[curr_la_block_i-1].t;
+      float d = current_block->la_block[curr_la_block_i].d;
+      float v0 = curr_la_block_i==0 ? 0: current_block->la_block[curr_la_block_i-1].v;
+      float dt = (float(curr_time)/STEPPER_TIMER_RATE - t0);
+      float la_step_rate = v0 + dt * e_acc_max * d;
       set_la_interval((int32_t)curr_step_rate + la_step_rate);
-      // set_la_interval((int32_t)curr_step_rate);
       curr_time += interval;
+      /* Ideas:
+          * Serial the final curr_time value to contrast against the la_plan end
+          * Reconstruir js simulator con input igual a marlin
+          * checker
+      */
     }
   #endif
 

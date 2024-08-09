@@ -442,7 +442,7 @@ class Stepper {
         static void set_la_interval(int32_t rate);
         static uint8_t curr_la_block_i; // needed for new la algo
         static uint32_t curr_time; // needed for new la algo
-        static uint32_t e_acc_max;
+        static float e_acc_max; // in steps/s2
       #endif
     #endif
 

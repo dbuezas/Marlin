@@ -7,7 +7,7 @@
 #include "planner_lin_adv.h"
 
 int32_t calc_match_slope(la_block_t* la_blocks, float_t p0_delta, float_t v_delta, float_t a, float_t a_inv, float_t t_limit, bool reverse, float_t t_offset) {
-  int8_t v_sign = v_delta < 0 ? -1 : 1;
+  float v_sign = v_delta < 0 ? -1 : 1;
   v_delta = fabs(v_delta);
   p0_delta *= v_sign;
 
@@ -73,7 +73,6 @@ enum class Part {
 };
 
 int8_t solve(Part curr, la_block_t* la_blocks, int8_t len, float t_acc_before, float t_deac_start, float t_end, float_t p0_delta, float_t v_target, float_t a, float_t a_inv) {
-  // TODO: accelerate_before and descelerate_start are in step event index offfff
   if (len == -1) return -1;
   switch (curr) {
     case Part::START: {
@@ -102,10 +101,17 @@ int8_t solve(Part curr, la_block_t* la_blocks, int8_t len, float t_acc_before, f
     }
     case Part::L_SLOPE: {
       // L_SLOPE -> CRUISE
-      int8_t len2 = calc_junc(&la_blocks[len], v_target, 0, a_inv, t_acc_before, t_deac_start);
-      len2 = join(la_blocks, len, len2);
-      len2 = solve(Part::CRUISE, la_blocks, len2, t_acc_before, t_deac_start, t_end, p0_delta, v_target, a, a_inv);
-      if (len2 > -1) return len2;
+      int8_t len2 = calc_junc(&la_blocks[len], v_target, 0, a_inv, t_acc_before, t_end);
+      if (len2 > -1) {
+        len2 = join(la_blocks, len, len2);
+        if (len2 == -1) {
+          // no time to go from l_slope => cruise, so there won't be time to reach r_slope either
+          // l_slop => end means breaking even before so that won't work wither. Backtrack now
+          break;
+        }
+        len2 = solve(Part::CRUISE, la_blocks, len2, t_acc_before, t_deac_start, t_end, p0_delta, v_target, a, a_inv);
+        if (len2 > -1) return len2;
+      }
 
       // L_SLOPE -> R_SLOPE
       float_t t_v_change = (t_acc_before + t_deac_start) * 0.5;
@@ -115,7 +121,8 @@ int8_t solve(Part curr, la_block_t* la_blocks, int8_t len, float t_acc_before, f
       if (len2 > -1) return len2;
 
       // L_SLOPE -> END
-      len2 = calc_match_slope(&la_blocks[len], 0, -v_target, a, a_inv, t_end, true, t_end);
+      float p1_delta = 2 * v_target * (t_end - t_deac_start);
+      len2 = calc_match_slope(&la_blocks[len], p1_delta, -v_target, a, a_inv, t_end, true, t_end);
       len2 = join(la_blocks, len, len2);
       if (len2 > -1) return len2;
       break;
@@ -144,37 +151,45 @@ int8_t solve(Part curr, la_block_t* la_blocks, int8_t len, float t_acc_before, f
   }
   return -1;
 }
-// float t_from_dist(float v0, float dist, float acc){
-//   return (-v0 + sqrtf(v0 * v0 + 2 * acc * dist)) / acc;
-// }
+float t_from_dist(float v0, float dist, float acc){
+  return (-v0 + sqrtf(v0 * v0 + 2 * acc * dist)) / acc;
+}
+float v_from_dist(float v0, float d, float acc) {
+  // Calculate the final velocity using the formula v_f = sqrt(v_0^2 + 2Ad)
+  return sqrtf(v0 * v0 + 2 * acc * d);
+}
 
-int8_t computeProfile(float_t last_exit_speed, block_t* block, float_t k, float_t eAccMax, la_block_t* la_blocks) {
+
+int8_t computeProfile(float_t last_exit_speed, block_t* block, float_t k, float_t e_acc_steps_s2_in_x_units, la_block_t* la_blocks) {
   if (block->accelerate_before < 0 || block->accelerate_before > block->step_event_count || block->accelerate_before > block->decelerate_start || block->decelerate_start < 0 || block->decelerate_start > block->step_event_count) {
     SERIAL_ECHOLNPGM("&BAD BLOCK!!!");
     return -1;
   }
 
-  float acc = block->acceleration_steps_per_s2 / float(STEPPER_TIMER_RATE);
+  float acc = block->acceleration_steps_per_s2;
+  
+  float cruise_rate = v_from_dist(block->initial_rate, block->accelerate_before, acc);
   // float t_acc_before = t_from_dist(block->initial_rate, block->accelerate_before, acc);
   // float t_cruise = (block->decelerate_start - block->accelerate_before) / block->nominal_rate;
   // float t_deac_start = t_acc_before + t_cruise;
   // float t_end = t_deac_start + t_from_dist(block->nominal_rate, block->step_event_count - block->accelerate_before, -acc);
-  float t_acc_before = (float(block->nominal_rate) - float(block->initial_rate)) / acc;
-  float t_cruise = (float(block->decelerate_start) - float(block->accelerate_before)) / float(block->nominal_rate);
+
+  float t_acc_before = (cruise_rate - float(block->initial_rate)) / acc;
+  float t_cruise = float(block->decelerate_start - block->accelerate_before) / cruise_rate;
   float t_deac_start = t_acc_before + t_cruise;
-  float t_end = t_deac_start + (float(block->nominal_rate) - float(block->final_rate)) / acc;
+  float t_end = t_deac_start + (cruise_rate - float(block->final_rate)) / acc;
 
   float_t p0_target = block->initial_rate * k;
   float_t p0 = last_exit_speed * k; 
   float_t p0_delta = p0_target - p0;
-  float_t v_target = block->acceleration_steps_per_s2 / float(STEPPER_TIMER_RATE) * k;
-  float_t a = eAccMax / float(STEPPER_TIMER_RATE);
+  float_t v_target = acc * k;
+  float_t a = e_acc_steps_s2_in_x_units;
   float_t a_inv = 1.0f / a;
   int8_t len = solve(Part::START, la_blocks, 0, t_acc_before, t_deac_start, t_end, p0_delta, v_target, a, a_inv);
-
+  la_blocks[len] = {float(UINT32_MAX), 0, 0};
+  len++;
   for (int32_t i = 1; i < len; i++) {
       if (la_blocks[i - 1].t > la_blocks[i].t) SERIAL_ECHOLNPGM("§la_block is broken!!!");
   }
   return len;
 }
-

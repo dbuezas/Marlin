@@ -303,7 +303,7 @@ typedef struct PlannerBlock {
   void reset() { memset((char*)this, 0, sizeof(*this)); }
 
   #if ENABLED(LA_ZERO_SLOWDOWN)
-    la_block_t la_block[9];
+    la_block_t la_block[10];
   #endif
 
 } block_t;
