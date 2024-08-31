@@ -2537,7 +2537,7 @@ hal_timer_t Stepper::block_phase_isr() {
             step_rate = current_block->final_rate;
 
         #endif
-
+        
         // step_rate to timer interval and steps per stepper isr
         interval = calc_multistep_timer_interval(step_rate << oversampling_factor);
         deceleration_time += interval;
@@ -2911,6 +2911,7 @@ hal_timer_t Stepper::block_phase_isr() {
             // not sure if this case exists, probably not
             a_max = 0;
           }
+
         #else
           if (la_active) {
             const uint32_t la_step_rate = la_advance_steps < current_block->max_adv_steps ? current_block->la_advance_rate : 0;
@@ -2955,33 +2956,35 @@ hal_timer_t Stepper::block_phase_isr() {
       #define UPDATE_FREQ 4096 // hz
       constexpr uint32_t interval = STEPPER_TIMER_RATE / UPDATE_FREQ;
       constexpr float dt = float(interval) / float(STEPPER_TIMER_RATE);
-      constexpr float dt_inv = UPDATE_FREQ; 
       if (current_block){
         float target_la_step_count;
+        float target_vel;
         if (la_active) {
           const float k = Planner::extruder_advance_K[E_INDEX_N(current_block->extruder)];
           target_la_step_count = curr_step_rate * k;
+          float current_xy_acc = 0;
+          if (step_events_completed < accelerate_before) {
+            current_xy_acc = current_block->acceleration_steps_per_s2;
+          } else if (step_events_completed >= decelerate_start) {
+            current_xy_acc = -float(current_block->acceleration_steps_per_s2);
+          }
+
+          target_vel = current_xy_acc * k;
         } else {
           target_la_step_count = 0; // (de)retration may start with non-zero current_la_step_rate and/or count. This needs to be gradually compensated for
+          target_vel = 0;
         }
-        const float distance_to_target = target_la_step_count - current_la_step_count;
-        const float one_shot_v = distance_to_target * dt_inv;
-        float a = ABS(one_shot_v - current_la_step_rate) * dt_inv;
-        NOMORE(a, a_max);
-        
-        float stopping_distance = current_la_step_rate * current_la_step_rate / (2 * a_max);
-        
-        bool fwd;
-        if (ABS(distance_to_target) <= stopping_distance){
-          // If we're within stopping distance, decelerate
-          fwd = current_la_step_rate < 0;
-        } else {
-          // Otherwise, accelerate towards the target
-          fwd = distance_to_target > 0;
-        }
+        const float d_vel = target_vel - current_la_step_rate;
+        const float a_match = (d_vel>0?1:-1) * a_max;
+        const float t = d_vel / a_match;
+        const float target_p2 = target_la_step_count + target_vel * t;
+        const float real_p2 = current_la_step_count + current_la_step_rate * t;
 
-        current_la_step_rate += (fwd ? a : -a) * dt;
+        const float acc = (target_p2 > real_p2 ? 1 : -1) * a_max;
+
+        current_la_step_rate += acc * dt;
         current_la_step_count += current_la_step_rate * dt;
+
         if (la_active) {
           set_la_interval((int32_t)curr_step_rate + current_la_step_rate);
         } else if (current_block->steps.e){
