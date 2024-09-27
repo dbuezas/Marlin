@@ -2,7 +2,7 @@
 #include "/Users/davidbuezas/code/Marlin/Marlin/src/HAL/shared/Delay.h"
 #include "/Users/davidbuezas/code/Marlin/Marlin/src/HAL/STM32/fastio.h"
 
-#define DELAY_TICK DELAY_NS(400) // 1.36MHZ 
+#define DELAY_TICK DELAY_NS(500) // 1.36MHZ 
 
 SoftI2C Wire(0,0);
 
