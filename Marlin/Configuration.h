@@ -734,9 +734,9 @@
   #define MPC_INCLUDE_FAN                             // Model the fan speed?
 
   // Measured physical constants from M306
-  #define MPC_BLOCK_HEAT_CAPACITY { 6.70 }
-  #define MPC_SENSOR_RESPONSIVENESS { 0.2252 }
-  #define MPC_AMBIENT_XFER_COEFF { 0.0520 }
+  #define MPC_BLOCK_HEAT_CAPACITY { 6.20 }
+  #define MPC_SENSOR_RESPONSIVENESS { 0.251 }
+  #define MPC_AMBIENT_XFER_COEFF { 0.0350 }
   #if ENABLED(MPC_INCLUDE_FAN)
     #define MPC_AMBIENT_XFER_COEFF_FAN255 { 0.1045 } // (W/K) Heat transfer coefficients from heat block to room air with fan on full.
   #endif
