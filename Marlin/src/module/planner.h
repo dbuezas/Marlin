@@ -106,6 +106,11 @@
   #define HAS_DIST_MM_ARG 1
 #endif
 
+// Planner steps use 32 bits
+// Use int_fast16_t if steps are always < 65536.
+typedef int32_t step_t;
+typedef uint32_t ustep_t;
+
 /**
  * Planner block flags as boolean bit fields
  */
