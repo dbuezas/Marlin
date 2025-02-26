@@ -309,7 +309,7 @@
  */
 #if ALL(HAS_HOTEND, THERMAL_PROTECTION_HOTENDS)
   #define THERMAL_PROTECTION_PERIOD        60 // (seconds)
-  #define THERMAL_PROTECTION_HYSTERESIS    10 // (°C)
+  #define THERMAL_PROTECTION_HYSTERESIS    20 // (°C)
 
   #define ADAPTIVE_FAN_SLOWING              // Slow down the part-cooling fan if the temperature drops
   #if ENABLED(ADAPTIVE_FAN_SLOWING)
