@@ -79,7 +79,7 @@ void FanCheck::compute_speed(uint16_t elapsedTime) {
 
         // Check fan speed
         constexpr int8_t max_extruder_fan_errors = TERN(HAS_PWMFANCHECK, 10000, 5000) / Temperature::fan_update_interval_ms;
-
+        break; // disable fan check since the tacho is used for the part cooling fan
         if (rps[f] >= 20 || TERN0(HAS_AUTO_FAN, thermalManager.autofan_speed[f] == 0))
           errors_count[f] = 0;
         else if (errors_count[f] < max_extruder_fan_errors)
