@@ -1,0 +1,6 @@
+~/.platformio/packages/toolchain-gccarmnoneeabi/bin/arm-none-eabi-objdump \
+  -d -S -C -M force-thumb \
+  .pio/build/STM32H723VG_btt/firmware.elf > firmware.lst
+
+
+forbid inlining with __attribute__((noinline))
