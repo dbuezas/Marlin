@@ -1,0 +1,55 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build and move Marlin firmware.bin to SD",
+      "type": "shell",
+      "command": [
+        "clear;",
+        "FIRMWARE_PATH='/Users/davidbuezas/code/Marlin-worktrees/Marlin-UM2/.pio/build/STM32H723VG_btt/firmware.bin';",
+        "SD_PATH='/Volumes/UNTITLED';",
+        "SD_READY_FLAG=$(mktemp -u -t sdready.XXXXXX);",
+        "rm -f \"$FIRMWARE_PATH\";",
+        "echo \"$(date +%H:%M:%S) > building\";",
+        "say 'building'&;",
+        "(",
+        "  sleep 1;",
+        "  while ! mount | grep -q \"$SD_PATH\"; do",
+        "    sleep .1;",
+        "  done;",
+        "  echo \"$(date +%H:%M:%S) > card\";",
+        "  say 'card'&;",
+        "  touch \"$SD_READY_FLAG\";",
+        ") &",
+        "if ! platformio run --environment STM32H723VG_btt; then",
+        "  echo \"$(date +%H:%M:%S) > error building\";",
+        "  say 'error building';",
+        "  exit 1;",
+        "fi;",
+        "echo \"$(date +%H:%M:%S) > firmware\";",
+        "say 'firmware'&;",
+        "while [ ! -f \"$SD_READY_FLAG\" ]; do",
+        "  sleep .1;",
+        "done;",
+        "cp \"$FIRMWARE_PATH\" \"$SD_PATH\";",
+        "DISK_IDENTIFIER=$(diskutil info \"$SD_PATH\" | grep 'Device Identifier' | awk '{print $3}');",
+        "if [ ! -z \"$DISK_IDENTIFIER\" ]; then",
+        "  diskutil eject \"$DISK_IDENTIFIER\";",
+        "  echo \"$(date +%H:%M:%S) > ejected\";",
+        "  say 'ejected';",
+        "fi;",
+      ],
+
+      "problemMatcher": []
+    },
+    {
+      "type": "PlatformIO",
+      "task": "Build",
+      "problemMatcher": [
+        "$platformio"
+      ],
+      "group": "build",
+      "label": "PlatformIO: Build"
+    }
+  ]
+}
