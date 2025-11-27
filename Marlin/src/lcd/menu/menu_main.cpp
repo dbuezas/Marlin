@@ -419,10 +419,7 @@ void menu_main() {
     #endif
 
     #if ENABLED(PREHEAT_SHORTCUT_MENU_ITEM)
-      for (uint8_t m = 0; m < PREHEAT_COUNT; ++m) {
-        editable.int8 = m;
-        ACTION_ITEM_f(ui.get_preheat_label(m), MSG_PREHEAT_M, []{ ui.preheat_all(editable.int8, 0); ui.return_to_status(); });
-      }
+      ACTION_ITEM_f(ui.get_preheat_label(0), MSG_PREHEAT_M, []{ ui.preheat_all(0, 0); ui.return_to_status(); });
       ACTION_ITEM(MSG_COOLDOWN, []{ thermalManager.cooldown(); ui.return_to_status(); });
 
       //SUBMENU(MSG_PREHEAT_CUSTOM, menu_preheat_only);
