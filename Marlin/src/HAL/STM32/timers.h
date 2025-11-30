@@ -54,7 +54,7 @@
 #endif
 
 // Timer configuration constants
-#define STEPPER_TIMER_RATE    2000000
+#define STEPPER_TIMER_RATE    55'000'000 // 55 Mhz
 #define TEMP_TIMER_FREQUENCY     1000 // Temperature::isr() should run at ~1kHz
 
 // Timer prescaler calculations
