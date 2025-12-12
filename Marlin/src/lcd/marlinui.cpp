@@ -1484,7 +1484,7 @@ void MarlinUI::init() {
 
 #if MARLINUI_ENCODER_DELTA
 
-  #define ENCODER_DEBOUNCE_MS 2
+  #define ENCODER_DEBOUNCE_MS 3
 
   /**
    * Get the encoder delta (-2 -1 0 +1 +2) since the last call, reading the live encoder state.
