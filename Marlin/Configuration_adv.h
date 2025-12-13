@@ -1171,13 +1171,13 @@
   #endif
 
   // Disable unused shapers if you need more free space
-  #define FTM_SHAPER_ZV
-  #define FTM_SHAPER_ZVD
-  #define FTM_SHAPER_ZVDD
-  #define FTM_SHAPER_ZVDDD
-  #define FTM_SHAPER_EI
-  #define FTM_SHAPER_2HEI
-  #define FTM_SHAPER_3HEI
+  // #define FTM_SHAPER_ZV
+  // #define FTM_SHAPER_ZVD
+  // #define FTM_SHAPER_ZVDD
+  // #define FTM_SHAPER_ZVDDD
+  // #define FTM_SHAPER_EI
+  // #define FTM_SHAPER_2HEI
+  // #define FTM_SHAPER_3HEI
   #define FTM_SHAPER_MZV
 
   #define FTM_DEFAULT_SHAPER_X      ftMotionShaper_MZV // Default shaper mode on X axis (NONE, ZV, ZVD, ZVDD, ZVDDD, EI, 2HEI, 3HEI, MZV)
