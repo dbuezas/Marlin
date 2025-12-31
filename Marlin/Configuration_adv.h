@@ -1190,13 +1190,13 @@
   #endif
 
   // Disable unused shapers if you need more free space
-  // #define FTM_SHAPER_ZV
-  // #define FTM_SHAPER_ZVD
-  // #define FTM_SHAPER_ZVDD
-  // #define FTM_SHAPER_ZVDDD
-  // #define FTM_SHAPER_EI
-  // #define FTM_SHAPER_2HEI
-  // #define FTM_SHAPER_3HEI
+  #define FTM_SHAPER_ZV
+  #define FTM_SHAPER_ZVD
+  #define FTM_SHAPER_ZVDD
+  #define FTM_SHAPER_ZVDDD
+  #define FTM_SHAPER_EI
+  #define FTM_SHAPER_2HEI
+  #define FTM_SHAPER_3HEI
   #define FTM_SHAPER_MZV
 
   #define FTM_DEFAULT_SHAPER_X      ftMotionShaper_MZV // Default shaper mode on X axis (NONE, ZV, ZVD, ZVDD, ZVDDD, EI, 2HEI, 3HEI, MZV)
@@ -1236,7 +1236,7 @@
 
   #define FTM_POLYS                             // Disable POLY5/6 to save ~3k of Flash. Preserves TRAPEZOIDAL.
   #if ENABLED(FTM_POLYS)
-    #define FTM_TRAJECTORY_TYPE POLY5     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
+    #define FTM_TRAJECTORY_TYPE TRAPEZOIDAL     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
                                                 // TRAPEZOIDAL: Continuous Velocity. Max acceleration is respected.
                                                 // POLY5:       Like POLY6 with 1.5x but uses less CPU.
                                                 // POLY6:       Continuous Acceleration (aka S_CURVE).
@@ -1362,7 +1362,7 @@
 // Increase the slowdown divisor for larger buffer sizes.
 #define SLOWDOWN
 #if ENABLED(SLOWDOWN)
-  #define SLOWDOWN_DIVISOR 4
+  #define SLOWDOWN_DIVISOR 2
 #endif
 
 /**
