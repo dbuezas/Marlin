@@ -1228,6 +1228,9 @@
     #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.875f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)
   #endif
 
+  // Minimum fraction of distance to spend at cruising speed (0.0f disables)
+  #define FTM_MINIMUM_CRUISE_RATIO 0.5f
+
   /**
    * Advanced configuration
    */
