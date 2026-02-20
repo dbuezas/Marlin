@@ -1228,6 +1228,12 @@
     #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.875f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)
   #endif
 
+  #define FTM_CONSTANT_JERK                     // Enable constant-jerk (7-phase S-curve) trajectory with block merging
+  #if ENABLED(FTM_CONSTANT_JERK)
+    #define FTM_DEFAULT_JERK_MAX 30000.0f       // (mm/s³) Default maximum jerk for constant-jerk trajectory
+    #define FTM_MERGE_BUFFER_THRESHOLD 0.75f    // Fraction of buffer that must be full before block merging kicks in
+  #endif
+
   #define FTM_MINIMUM_CRUISE_RATIO 0.5f         // Minimum fraction of distance to spend at cruising speed (0.0f disables)
                                                 // Reduces vibrations and extrusion artefacts in short blocks like small surface
                                                 // features and thin solid infills
