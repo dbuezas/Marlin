@@ -157,7 +157,7 @@
 #define Z_DRIVER_TYPE  TMC2209
 //#define X2_DRIVER_TYPE A4988
 //#define Y2_DRIVER_TYPE A4988
-#define Z2_DRIVER_TYPE TMC2209
+//#define Z2_DRIVER_TYPE TMC2209
 //#define Z3_DRIVER_TYPE A4988
 //#define Z4_DRIVER_TYPE A4988
 //#define I_DRIVER_TYPE  A4988
@@ -3723,11 +3723,11 @@
   #endif
 
   // Use some of the NeoPixel LEDs for static (background) lighting
-  #define NEOPIXEL_BKGD_INDEX_FIRST   0 // Index of the first background LED
-  #define NEOPIXEL_BKGD_INDEX_LAST    0 // Index of the last background LED
+  #define NEOPIXEL_BKGD_INDEX_FIRST   1 // Index of the first background LED
+  #define NEOPIXEL_BKGD_INDEX_LAST    1 // Index of the last background LED
   #define NEOPIXEL_BKGD_COLOR         { 255, 255, 255, 0 }  // R, G, B, W
   #define NEOPIXEL_BKGD_TIMEOUT_COLOR {  25,  25,  25, 0 }  // R, G, B, W
-  #define NEOPIXEL_BKGD_ALWAYS_ON       // Keep the backlight on when other NeoPixels are off
+  //#define NEOPIXEL_BKGD_ALWAYS_ON       // Keep the backlight on when other NeoPixels are off
 #endif
 
 /**

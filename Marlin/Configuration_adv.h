@@ -949,7 +949,7 @@
 #define HOMING_BACKOFF_POST_MM { 2, 2, 2 }    // (linear=mm, rotational=°) Backoff from endstops after homing
 //#define XY_COUNTERPART_BACKOFF_MM 0         // (mm) Backoff X after homing Y, and vice-versa
 
-//#define QUICK_HOME                          // If G28 contains XY do a diagonal move first
+#define QUICK_HOME                          // If G28 contains XY do a diagonal move first
 //#define HOME_Y_BEFORE_X                     // If G28 contains XY home Y before X
 //#define HOME_Z_FIRST                        // Home Z first. Requires a real endstop (not a probe).
 //#define CODEPENDENT_XY_HOMING               // If X/Y can't home without homing Y/X first
@@ -1700,7 +1700,7 @@
   #endif
 
   // The timeout to return to the status screen from sub-menus
-  #define LCD_TIMEOUT_TO_STATUS 15000     // (ms)
+  #define LCD_TIMEOUT_TO_STATUS (1000*60*60)     // (ms)
 
   // Scroll a longer status message into view
   #define STATUS_MESSAGE_SCROLLING
@@ -2346,13 +2346,13 @@
  * Display Sleep
  * Enable this option to save energy and prevent OLED pixel burn-in.
  */
-#define DISPLAY_SLEEP_MINUTES 10       // (minutes) Timeout before turning off the screen
+//#define DISPLAY_SLEEP_MINUTES 10       // (minutes) Timeout before turning off the screen
 
 /**
  * LCD Backlight Timeout
  * Requires a display with a controllable backlight
  */
-//#define LCD_BACKLIGHT_TIMEOUT_MINS 1  // (minutes) Timeout before turning off the backlight
+#define LCD_BACKLIGHT_TIMEOUT_MINS 1  // (minutes) Timeout before turning off the backlight
 
 #if defined(DISPLAY_SLEEP_MINUTES) || defined(LCD_BACKLIGHT_TIMEOUT_MINS)
   #define EDITABLE_DISPLAY_TIMEOUT      // Edit sleep / backlight timeout with M255 S<minutes> and a menu item
