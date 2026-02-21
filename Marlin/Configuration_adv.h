@@ -1214,7 +1214,7 @@
     #define FTM_SMOOTHING_TIME_X        0.00f   // (s) Smoothing time for X axis. Zero means disabled.
     #define FTM_SMOOTHING_TIME_Y        0.00f   // (s) Smoothing time for Y axis
     #define FTM_SMOOTHING_TIME_Z        0.00f   // (s) Smoothing time for Z axis
-    #define FTM_SMOOTHING_TIME_E        0.02f   // (s) Smoothing time for E axis. Prevents noise/skipping from LA by
+    #define FTM_SMOOTHING_TIME_E        0.05f   // (s) Smoothing time for E axis. Prevents noise/skipping from LA by
                                                 //     smoothing acceleration peaks, which may also smooth curved surfaces.
   #endif
 
@@ -1235,7 +1235,7 @@
    */
   #define FTM_BUFFER_SIZE             128   // Window size for trajectory generation, must be a power of 2 (e.g 64, 128, 256, ...)
                                             // The total buffered time in seconds is (FTM_BUFFER_SIZE/FTM_FS)
-  #define FTM_FS                     1000   // (Hz) Frequency for trajectory generation.
+  #define FTM_FS                     5000   // (Hz) Frequency for trajectory generation.
   #define FTM_MIN_SHAPE_FREQ           20   // (Hz) Minimum shaping frequency, lower consumes more RAM
 
   /**
