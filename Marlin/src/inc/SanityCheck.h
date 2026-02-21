@@ -2411,25 +2411,25 @@ static_assert(NUM_SERVOS <= NUM_SERVO_PLUGS, "NUM_SERVOS (or some servo index) i
 #endif
 
 /**
- * FYSETC/MKS/BTT/BEEZ Mini Panel Requirements
+ * FYSETC/MKS/BTT/BEEZ Mini Panel Requirements --> uncommented for 12864 compatibility
  */
-#if ANY(FYSETC_242_OLED_12864, FYSETC_MINI_12864_2_1)
-  #ifndef NEO_RGB
-    #define NEO_RGB 123
-    #define FAUX_RGB 1
-  #endif
-  #if defined(NEOPIXEL_TYPE) && NEOPIXEL_TYPE != NEO_RGB
-    #error "Your FYSETC/MKS/BTT/BEEZ Mini Panel requires NEOPIXEL_TYPE to be NEO_RGB."
-  #elif defined(NEOPIXEL_PIXELS) && NEOPIXEL_PIXELS < 3
-    #error "Your FYSETC/MKS/BTT/BEEZ Mini Panel requires NEOPIXEL_PIXELS >= 3."
-  #endif
-  #if FAUX_RGB
-    #undef NEO_RGB
-    #undef FAUX_RGB
-  #endif
-#elif ANY(FYSETC_MINI_12864_1_2, FYSETC_MINI_12864_2_0) && DISABLED(RGB_LED)
-  #error "Your FYSETC Mini Panel requires RGB_LED."
-#endif
+//#if ANY(FYSETC_242_OLED_12864, FYSETC_MINI_12864_2_1)
+  //#ifndef NEO_RGB
+    //#define NEO_RGB 123
+    //#define FAUX_RGB 1
+  //#endif
+  //#if defined(NEOPIXEL_TYPE) && NEOPIXEL_TYPE != NEO_RGB
+    //#error "Your FYSETC/MKS/BTT/BEEZ Mini Panel requires NEOPIXEL_TYPE to be NEO_RGB."
+  //#elif defined(NEOPIXEL_PIXELS) && NEOPIXEL_PIXELS < 3
+    //#error "Your FYSETC/MKS/BTT/BEEZ Mini Panel requires NEOPIXEL_PIXELS >= 3."
+  //#endif
+  //#if FAUX_RGB
+    //#undef NEO_RGB
+    //#undef FAUX_RGB
+  //#endif
+//#elif ANY(FYSETC_MINI_12864_1_2, FYSETC_MINI_12864_2_0) && DISABLED(RGB_LED)
+  //#error "Your FYSETC Mini Panel requires RGB_LED."
+//#endif
 
 /**
  * LED Control Menu requirements
