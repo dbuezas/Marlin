@@ -1218,7 +1218,7 @@
 
   #define FTM_POLYS                             // Disable POLY5/6 to save ~3k of Flash. Preserves TRAPEZOIDAL.
   #if ENABLED(FTM_POLYS)
-    #define FTM_TRAJECTORY_TYPE FTM_CONSTANT_JERK     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
+    #define FTM_TRAJECTORY_TYPE CONSTANT_JERK     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
                                                 // TRAPEZOIDAL: Continuous Velocity. Max acceleration is respected.
                                                 // POLY5:       Like POLY6 with 1.5x but uses less CPU.
                                                 // POLY6:       Continuous Acceleration (aka S_CURVE).
