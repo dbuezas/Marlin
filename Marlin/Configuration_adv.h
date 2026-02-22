@@ -3284,11 +3284,7 @@
 
   #if AXIS_IS_TMC_CONFIG(E0)
     #define E0_CURRENT      550
-    #if ENABLED(GEARBOX_BEAR)
-      #define E0_MICROSTEPS    16
-    #else
-      #define E0_MICROSTEPS    32
-    #endif
+    #define E0_MICROSTEPS     8
     #define E0_RSENSE      0.11
     #define E0_CHAIN_POS     -1
     //#define E0_INTERPOLATE true
