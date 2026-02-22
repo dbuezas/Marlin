@@ -1235,7 +1235,7 @@
                                                 // Acceleration will ramp up gradually, so max acceleration is limited
                                                 // by max speed and distance travelled
   #if ENABLED(FTM_CONSTANT_JERK)
-    #define FTM_DEFAULT_JERK_MAX 500'000.0f     // (mm/s³) Default maximum jerk for constant-jerk trajectory
+    #define FTM_DEFAULT_JERK_MAX 400'000.0f     // (mm/s³) Default maximum jerk for constant-jerk trajectory
                                                 // Higher prints faster at the cost of increased resonance and extruder stress
   #endif
 
