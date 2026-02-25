@@ -303,7 +303,7 @@ class ConstantJerkBlockPlanner {
 
           // Forward: cap exit by what's reachable from entry
           float v_fwd = maxReachableSpeed(left_entry, left_mm, left_nominal, left_a, jerk_max);
-          left_exit = _MIN(v_fwd, left_exit, left_nominal);
+          left_exit = _MIN(v_fwd, left_exit, left_nominal); // TODO(@dbuezas): the left_nominal cap should already be in maxReachableSpeed
 
           // Check v_peak against min interior junction limit
           float v_peak = peakSpeed(left_entry, left_exit, left_a, jerk_max, left_mm, left_nominal);
@@ -321,10 +321,10 @@ class ConstantJerkBlockPlanner {
               float right_vpeak = peakSpeed(right_entry, right_exit_v, right_a, jerk_max, right_mm, right_nominal);
               float right_min_jv = minVal(max_junction_v, left_end + 1, right_end);
 
+              // Right too agressive, split it
               if (right_vpeak > right_min_jv) {
                 uint8_t right_len = right_end - left_end;
                 right_end = left_end + right_len / 2;
-                if (right_end <= left_end) right_end = left_end + 1;
                 continue;
               }
             }
@@ -333,23 +333,20 @@ class ConstantJerkBlockPlanner {
             exit_v[left_end - 1] = left_exit;
             break;
           } else {
-            // Left too aggressive — need to split
+            // Left too aggressive - need to split
+
+            if (prev_right_group_size == left_end || left_end == 1) {
+              // TODO(@dbuezas). This should never happen, but if it does it means
+              // there is conceptual bug and an invariant isn't
+
+            }
             uint8_t new_left_end = left_end / 2;
-            if (new_left_end < 2) new_left_end = 1;
 
             // Don't shrink below floor - the blocks we're shrinking into were
             // previously validated as a right group (when continuing from boundary)
             if (new_left_end < prev_right_group_size) {
-              // Try shrinking right group instead
-              uint8_t right_len = right_end - left_end;
-              if (right_len > 1) {
-                right_end = left_end + right_len / 2;
-                continue;
-              }
-              // TODO(@dbuezas): We should never get here but we do
-              // I think here lies the last discontinuity bug
+              new_left_end = prev_right_group_size;
             }
-
             right_end = left_end;
             left_end = new_left_end;
           }
