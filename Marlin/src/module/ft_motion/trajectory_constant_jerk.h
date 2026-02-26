@@ -185,6 +185,8 @@ public:
     return phaseJerk(ph);
   }
 
+  float getExitSpeed() const { return v1; }
+
   void reset() override {
     v0 = v1 = 0.0f;
     a_max = j = distance = 0.0f;

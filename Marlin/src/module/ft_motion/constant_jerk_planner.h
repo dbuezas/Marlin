@@ -94,7 +94,6 @@ class ConstantJerkBlockPlanner {
  public:
   void reset() {
     orig_block_index = 0;
-    last_exit_speed = 0;
     traj.reset();
   }
 
@@ -145,7 +144,7 @@ class ConstantJerkBlockPlanner {
     }
 
     // Forward pass
-    entry_v[0] = last_exit_speed;
+    entry_v[0] = traj.getExitSpeed();
     for (uint8_t i = 0; i < block_count - 1; i++) {
       float v_reachable = maxReachableSpeed(entry_v[i], mm[i], nominal[i], accel[i], jerk_max);
       entry_v[i + 1] = _MIN(v_reachable, entry_v[i + 1]);
@@ -158,7 +157,7 @@ class ConstantJerkBlockPlanner {
     float cum_max_entry_speed[BLOCK_BUFFER_SIZE];  // cum_max_entry_speed[i] = minVal(max_entry_speed, 1, i+1) for i>=1
     cum_mm[0] = mm[0];
     cum_min_a[0] = accel[0];
-    cum_max_entry_speed[0] = last_exit_speed;  // unused but initialized
+    cum_max_entry_speed[0] = traj.getExitSpeed();  // unused but initialized
 
     uint8_t left_end = 1;
     const uint8_t max_left_end = _MIN(block_count, BLOCK_BUFFER_SIZE / 2);
@@ -265,8 +264,7 @@ class ConstantJerkBlockPlanner {
 
     // --- 5. Plan trajectory ---
 
-    traj.plan_full(last_exit_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
-    last_exit_speed = left_exit_speed;
+    traj.plan_full(traj.getExitSpeed(), left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
 
     // Set up execution tracking
     orig_block_index = 0;
@@ -339,5 +337,4 @@ class ConstantJerkBlockPlanner {
   uint8_t group_block_count = 0;
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
-  float last_exit_speed = 0;
 };
