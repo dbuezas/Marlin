@@ -677,7 +677,7 @@ void FTMotion::fill_stepper_plan_buffer() {
     #if ENABLED(FTM_CONSTANT_JERK)
       // For merged constant-jerk blocks, check if we've crossed into the next
       // original block. If so, release the old block and update ratio/startPos.
-      if (trajectoryType == TrajectoryType::CONSTANT_JERK && cjPlanner.isActive()) {
+      if (trajectoryType == TrajectoryType::CONSTANT_JERK) {
         while (cjPlanner.checkBlockBoundary(dist)) {
           // Release the consumed original block
           discard_planner_block_protected();
