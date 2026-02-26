@@ -116,7 +116,6 @@ class ConstantJerkBlockPlanner {
 
     // Map from move-block index to buffer offset (for tracking consumed range)
     uint8_t buf_offset[BLOCK_BUFFER_SIZE]; // buf_offset[i] = buffer position of move block i
-    buf_offset[0] = 0; // current block is at buffer position 0
 
     // Look ahead at future blocks.
     // get_future_block(offset) returns block_buffer[tail + offset].
@@ -134,6 +133,7 @@ class ConstantJerkBlockPlanner {
       block_count++;
     }
     if (block_count == 0) {
+      // should never happen
       traj.reset();
       return false;
     }

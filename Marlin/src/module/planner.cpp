@@ -774,7 +774,7 @@ block_t* Planner::get_current_block() {
   return nullptr;
 }
 
-block_t* Planner::get_future_block(const uint8_t offset, bool reject_recalculate_blocks = true) {
+block_t* Planner::get_future_block(const uint8_t offset, bool reject_recalculate_blocks/*=true*/) {
   const uint8_t nr_moves = movesplanned();
   if (nr_moves <= offset) return nullptr;
   block_t * const block = &block_buffer[block_add_mod(block_buffer_tail, offset)];

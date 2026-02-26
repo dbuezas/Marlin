@@ -113,8 +113,10 @@ public:
 
     if (s_ramps > distance) {
       float v_hi = v_peak;
-      if (cj_totalRampDist(v_lo, v_small, v_large, j, a_max) > distance)
-        return; // Infeasible
+      if (cj_totalRampDist(v_lo, v_small, v_large, j, a_max) > distance){
+        SERIAL_ECHOLNPGM("ERROR: infeasible", distance);
+        return;  // Infeasible
+      }
       for (int i = 0; i < 48; i++) {
         float mid = 0.5f * (v_lo + v_hi);
         float s_mid = cj_totalRampDist(mid, v_small, v_large, j, a_max);
