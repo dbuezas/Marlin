@@ -100,26 +100,19 @@ class ConstantJerkBlockPlanner {
   /**
    * Plan trajectory for the current block (already consumed from planner buffer).
    *
-   * @param current_block The block already consumed by plan_next_block()
-   *
    * Looks ahead at future blocks via get_future_block(), runs a jerk-aware
    * reverse/forward pass across all visible blocks, then plans the first
    * block (or merged group) as an S-curve trajectory.
    *
    * Returns true if a trajectory is ready for execution.
    */
-  bool planNext(const block_t* current_block, const float jerk_max) {
+  bool planNext(const float jerk_max) {
     float mm[BLOCK_BUFFER_SIZE];
     float nominal[BLOCK_BUFFER_SIZE];
     float accel[BLOCK_BUFFER_SIZE];
     float max_entry_speed[BLOCK_BUFFER_SIZE];  // max entry speed ceiling per block
 
-    mm[0] = current_block->millimeters; // TODO: many of these are probably not needed
-    nominal[0] = current_block->nominal_speed;
-    accel[0] = current_block->acceleration;
-    max_entry_speed[0] = SQRT(current_block->max_entry_speed_sqr);
-
-    uint8_t block_count = 1;
+    uint8_t block_count = 0;
 
     // Map from move-block index to buffer offset (for tracking consumed range)
     uint8_t buf_offset[BLOCK_BUFFER_SIZE]; // buf_offset[i] = buffer position of move block i
@@ -128,8 +121,8 @@ class ConstantJerkBlockPlanner {
     // Look ahead at future blocks.
     // get_future_block(offset) returns block_buffer[tail + offset].
     // The current block is at tail (offset 0), so offset 1 = next block.
-    for (uint8_t i = 1; i < BLOCK_BUFFER_SIZE; i++) {
-      block_t* blk = planner.get_future_block(i);
+    for (uint8_t i = 0; i < BLOCK_BUFFER_SIZE; i++) {
+      block_t* blk = planner.get_future_block(i, false);
       if (!blk) break;
       if (blk->is_sync()) continue; // skip sync blocks in lookahead
 
@@ -139,6 +132,10 @@ class ConstantJerkBlockPlanner {
       accel[block_count] = blk->acceleration;
       max_entry_speed[block_count] = SQRT(blk->max_entry_speed_sqr);
       block_count++;
+    }
+    if (block_count == 0) {
+      traj.reset();
+      return false;
     }
 
     float entry_v[BLOCK_BUFFER_SIZE + 1];
@@ -163,7 +160,7 @@ class ConstantJerkBlockPlanner {
     float cum_max_entry_speed[BLOCK_BUFFER_SIZE];  // cum_max_entry_speed[i] = minVal(max_entry_speed, 1, i+1) for i>=1
     cum_mm[0] = mm[0];
     cum_min_a[0] = accel[0];
-    cum_max_entry_speed[0] = traj.getExitSpeed();  // unused but initialized
+    cum_max_entry_speed[0] = entry_v[0];  // unused but initialized
 
     uint8_t left_end = 1;
     const uint8_t max_left_end = _MIN(block_count, BLOCK_BUFFER_SIZE / 2);
@@ -270,7 +267,7 @@ class ConstantJerkBlockPlanner {
 
     // --- 5. Plan trajectory ---
 
-    traj.plan_full(traj.getExitSpeed(), left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
+    traj.plan_full(entry_v[0], left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
 
     // Set up execution tracking
     orig_block_index = 0;

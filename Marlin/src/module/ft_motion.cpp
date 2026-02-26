@@ -434,7 +434,7 @@ bool FTMotion::plan_next_block() {
       if (trajectoryType == TrajectoryType::CONSTANT_JERK) {
         // CJ planner runs its own jerk-aware reverse/forward pass on all
         // visible blocks, then plans a single or merged S-curve trajectory.
-        cjPlanner.planNext(current_block, cfg.jerk_max);
+        cjPlanner.planNext(cfg.jerk_max);
         currentGenerator = &cjPlanner.trajectory();
         endPos_prevBlock += moveDist;
       }
@@ -684,7 +684,9 @@ void FTMotion::fill_stepper_plan_buffer() {
           block_t * const next_block = planner.get_current_block();
           if (!next_block) break;
           stepper.current_block = next_block;
-          if (!next_block->is_sync()) {
+          if (next_block->is_sync()) {
+            if (next_block->is_sync_pos()) stepper._set_position(next_block->position);
+          } else {
             startPos = endPos_prevBlock;
             endPos_prevBlock += next_block->ext_distance_mm;
             ratio = next_block->ext_distance_mm / next_block->millimeters;

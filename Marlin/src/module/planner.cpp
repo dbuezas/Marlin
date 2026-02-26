@@ -774,11 +774,11 @@ block_t* Planner::get_current_block() {
   return nullptr;
 }
 
-block_t* Planner::get_future_block(const uint8_t offset) {
+block_t* Planner::get_future_block(const uint8_t offset, bool reject_recalculate_blocks = true) {
   const uint8_t nr_moves = movesplanned();
   if (nr_moves <= offset) return nullptr;
   block_t * const block = &block_buffer[block_add_mod(block_buffer_tail, offset)];
-  if (block->flag.recalculate) return nullptr;
+  if (reject_recalculate_blocks && block->flag.recalculate) return nullptr;
   return block;
 }
 
@@ -1217,7 +1217,7 @@ void Planner::recalculate(const float safe_exit_speed_sqr) {
     #else
       #define _CALC_FAN_SPEED(f) CALC_FAN_SPEED(f)
     #endif
-    
+
     #if ENABLED(FAN_SOFT_PWM)
       #define _FAN_SET(F) thermalManager.soft_pwm_amount_fan[F] = _CALC_FAN_SPEED(fan_speed[F]);
     #else

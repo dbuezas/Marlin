@@ -1137,7 +1137,7 @@ class Planner {
      *
      * WARNING: Called from Stepper ISR context!
      */
-    static block_t* get_future_block(const uint8_t offset);
+    static block_t* get_future_block(const uint8_t offset, bool reject_recalculate_blocks);
 
     /**
      * "Release" the current block so its slot can be reused.
