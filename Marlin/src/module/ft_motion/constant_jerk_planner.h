@@ -93,7 +93,6 @@ static float minVal(const float* arr, uint8_t from, uint8_t to) {
 class ConstantJerkBlockPlanner {
  public:
   void reset() {
-    last_right_group_size = 0;
     orig_block_index = 0;
     last_exit_speed = 0;
     traj.reset();
@@ -177,16 +176,18 @@ class ConstantJerkBlockPlanner {
     }
 
     // Find right-compatible group starting at left_end
-    float r_a_min = accel[left_end], r_a_max = accel[left_end];
     uint8_t right_end = left_end;
-    for (uint8_t i = left_end; i < block_count; i++) {
-      if (nominal[i] != nominal[left_end]) break;
-      float new_a_min = _MIN(r_a_min, accel[i]);
-      float new_a_max = _MAX(r_a_max, accel[i]);
-      if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
-      r_a_min = new_a_min;
-      r_a_max = new_a_max;
-      right_end++;
+    if (left_end < block_count) {
+      float r_a_min = accel[left_end], r_a_max = accel[left_end];
+      for (uint8_t i = left_end; i < block_count; i++) {
+        if (nominal[i] != nominal[left_end]) break;
+        float new_a_min = _MIN(r_a_min, accel[i]);
+        float new_a_max = _MAX(r_a_max, accel[i]);
+        if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
+        r_a_min = new_a_min;
+        r_a_max = new_a_max;
+        right_end++;
+      }
     }
 
     // Iteratively refine: split groups until junction constraints are met
@@ -334,7 +335,6 @@ class ConstantJerkBlockPlanner {
   }
 
   ConstantJerkTrajectoryGenerator traj;
-  uint8_t last_right_group_size = 0;
   uint8_t orig_block_index = 0;
   uint8_t group_block_count = 0;
   float orig_block_start_dist = 0;
