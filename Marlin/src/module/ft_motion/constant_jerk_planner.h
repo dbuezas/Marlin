@@ -121,17 +121,23 @@ class ConstantJerkBlockPlanner {
 
     uint8_t block_count = 1;
 
+    // Map from move-block index to buffer offset (for tracking consumed range)
+    uint8_t buf_offset[BLOCK_BUFFER_SIZE]; // buf_offset[i] = buffer position of move block i
+    buf_offset[0] = 0; // current block is at buffer position 0
+
     // Look ahead at future blocks.
     // get_future_block(offset) returns block_buffer[tail + offset].
     // The current block is at tail (offset 0), so offset 1 = next block.
     for (uint8_t i = 1; i < BLOCK_BUFFER_SIZE; i++) {
       block_t* blk = planner.get_future_block(i);
-      if (!blk || blk->is_sync()) break; // TODO: skip synch blocks
+      if (!blk) break;
+      if (blk->is_sync()) continue; // skip sync blocks in lookahead
 
-      mm[i] = blk->millimeters;
-      nominal[i] = blk->nominal_speed;
-      accel[i] = blk->acceleration;
-      max_entry_speed[i] = SQRT(blk->max_entry_speed_sqr);
+      buf_offset[block_count] = i;
+      mm[block_count] = blk->millimeters;
+      nominal[block_count] = blk->nominal_speed;
+      accel[block_count] = blk->acceleration;
+      max_entry_speed[block_count] = SQRT(blk->max_entry_speed_sqr);
       block_count++;
     }
 
@@ -270,6 +276,8 @@ class ConstantJerkBlockPlanner {
     orig_block_index = 0;
     orig_block_start_dist = 0;
     group_block_count = left_end;
+    // Raw buffer entries consumed (includes skipped sync blocks)
+    group_buffer_consumed = buf_offset[left_end - 1] + 1;
     orig_block_end_dist = cum_mm[0];
     return true;
   }
@@ -299,6 +307,7 @@ class ConstantJerkBlockPlanner {
 
   ConstantJerkTrajectoryGenerator& trajectory() { return traj; }
   uint8_t blockCount() const { return group_block_count; }
+  uint8_t bufferConsumed() const { return group_buffer_consumed; }
   uint8_t currentBlockIndex() const { return orig_block_index; }
 
  private:
@@ -335,6 +344,7 @@ class ConstantJerkBlockPlanner {
   ConstantJerkTrajectoryGenerator traj;
   uint8_t orig_block_index = 0;
   uint8_t group_block_count = 0;
+  uint8_t group_buffer_consumed = 0;
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 };
