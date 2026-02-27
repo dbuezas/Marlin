@@ -125,7 +125,10 @@ public:
         );
 
         v_peak = v_peak_min;
-      } else if (distance - minmimum_distance > 0.01f) {
+      } else if (distance - minmimum_distance <= 0.01f) {
+        // v_large barely fits, use it directly
+        v_peak = v_peak_min;
+      } else {
         for (int i = 0; i < 48; i++) {
           float v_mid = 0.5f * (v_peak_min + v_peak_max);
           float s_mid = cj_totalRampDist(v_mid, v_small, v_large, j, a_max);
