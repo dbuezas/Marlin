@@ -94,6 +94,7 @@ class ConstantJerkBlockPlanner {
  public:
   void reset() {
     orig_block_index = 0;
+    min_left_size = 1;
     traj.reset();
   }
 
@@ -251,10 +252,14 @@ class ConstantJerkBlockPlanner {
         float left_min_jv = cum_max_entry_speed[left_end - 1];
 
         if (left_end > 1 && left_v_peak > left_min_jv) {
-          // Left too aggressive - need to split
-          uint8_t new_left_end = left_end / 2;
+          // Left too aggressive - need to split, but not smaller than
+          // the previous right group size (which determined our entry speed)
+          if (left_end == min_left_size){
+            SERIAL_ECHOLNPGM("CJ ERROR, needs to split left but cant. left_end:", left_end, " min_left_size:", min_left_size, " right_end:", right_end);
+            break;
+          }
           right_end = left_end;
-          left_end = new_left_end;
+          left_end = _MAX(left_end / 2, min_left_size);
           max_left_exit = -1; // force recalculate
           continue;
         }
@@ -272,6 +277,11 @@ class ConstantJerkBlockPlanner {
                       " a:", cum_min_a[left_end - 1], " j:", jerk_max,
                       " left:", left_end, " bc:", block_count);
     traj.plan_full(entry_v[0], left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
+
+    // Store right group size as minimum left size for next planning cycle.
+    // The right group determined our exit speed — if it becomes left next time,
+    // splitting it smaller could make the entry speed infeasible.
+    min_left_size = right_end - left_end;
 
     // Set up execution tracking
     orig_block_index = 0;
@@ -346,6 +356,7 @@ class ConstantJerkBlockPlanner {
   uint8_t orig_block_index = 0;
   uint8_t group_block_count = 0;
   uint8_t group_buffer_consumed = 0;
+  uint8_t min_left_size = 1;  // Floor for left split: previous right group size
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 };
