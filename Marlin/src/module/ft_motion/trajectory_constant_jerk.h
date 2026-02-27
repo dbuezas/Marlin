@@ -120,7 +120,7 @@ public:
         v_peak = v_lo;
       }
       else {
-        while (true) {
+        for (int i = 0; i < 48; i++) {
           float mid = 0.5f * (v_lo + v_hi);
           float s_mid = cj_totalRampDist(mid, v_small, v_large, j, a_max);
           if (s_mid > distance)
@@ -130,6 +130,11 @@ public:
           if (distance - s_mid >= 0 && distance - s_mid < 0.01f) {
             // Undershoot peak and cruise for 0.01mm instead of wasting cpu
             break;
+          }
+          if (i==47){
+            SERIAL_ECHOLNPGM("FOR LOOP ENDED:", distance, " v0:", v0, " v1:", v1, " vs:", v_small, " vl:", v_large);
+            SERIAL_ECHOLNPGM("FOR LOOP ENDED:", v_lo, " v_lo:", v_lo, " v_hi:", v_hi, " mid:", mid);
+
           }
         }
         v_peak = v_lo;
