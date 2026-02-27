@@ -267,6 +267,10 @@ class ConstantJerkBlockPlanner {
 
     // --- 5. Plan trajectory ---
 
+    SERIAL_ECHOLNPGM("CJP plan: v0:", entry_v[0], " v1:", left_exit_speed,
+                      " d:", cum_mm[left_end - 1], " n:", nominal[0],
+                      " a:", cum_min_a[left_end - 1], " j:", jerk_max,
+                      " left:", left_end, " bc:", block_count);
     traj.plan_full(entry_v[0], left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
 
     // Set up execution tracking

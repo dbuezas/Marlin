@@ -113,20 +113,27 @@ public:
 
     if (s_ramps > distance) {
       float v_hi = v_peak;
-      if (cj_totalRampDist(v_lo, v_small, v_large, j, a_max) > distance){
-        SERIAL_ECHOLNPGM("ERROR: infeasible", distance);
-        return;  // Infeasible
+      if (cj_totalRampDist(v_lo, v_small, v_large, j, a_max) > distance) {
+        // Ramp between v0 and v1 exceeds distance. Use v_lo as peak
+        // so entry/exit speeds are preserved (no discontinuity at boundaries).
+        SERIAL_ECHOLNPGM("CJ infeasible d:", distance, " v0:", v0, " v1:", v1, " vs:", v_small, " vl:", v_large);
+        v_peak = v_lo;
       }
-      for (int i = 0; i < 48; i++) {
-        float mid = 0.5f * (v_lo + v_hi);
-        float s_mid = cj_totalRampDist(mid, v_small, v_large, j, a_max);
-        if (s_mid > distance)
-          v_hi = mid;
-        else
-          v_lo = mid;
-        if (distance - s_mid >= 0 && distance - s_mid < 0.1f) break;
+      else {
+        while (true) {
+          float mid = 0.5f * (v_lo + v_hi);
+          float s_mid = cj_totalRampDist(mid, v_small, v_large, j, a_max);
+          if (s_mid > distance)
+            v_hi = mid;
+          else
+            v_lo = mid;
+          if (distance - s_mid >= 0 && distance - s_mid < 0.01f) {
+            // Undershoot peak and cruise for 0.01mm instead of wasting cpu
+            break;
+          }
+        }
+        v_peak = v_lo;
       }
-      v_peak = v_lo;
     }
 
     float t1, t2, t3, t4 = 0, t5, t6, t7;
