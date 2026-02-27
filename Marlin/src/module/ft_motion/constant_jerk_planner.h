@@ -130,7 +130,7 @@ class ConstantJerkBlockPlanner {
       mm[block_count] = blk->millimeters;
       nominal[block_count] = blk->nominal_speed;
       accel[block_count] = blk->acceleration;
-      max_entry_speed[block_count] = SQRT(blk->max_entry_speed_sqr);
+      max_entry_speed[block_count] = blk->vmax_junction;
       block_count++;
     }
     if (block_count == 0) {
