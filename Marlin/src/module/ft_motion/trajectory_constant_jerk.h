@@ -95,7 +95,7 @@ public:
   void plan_full(float initial_speed_in, float final_speed_in,
                  float accel_max_in, float jerk_in,
                  float distance_in, float v_nominal_in) {
-    reset();
+    // reset();
 
     v0 = initial_speed_in;
     v1 = final_speed_in;
@@ -116,7 +116,14 @@ public:
       if (minmimum_distance > distance) {
         // Ramp between v0 and v1 exceeds distance.
         // Position won't be continuous, this should never happen
-        SERIAL_ECHOLNPGM("CJ ERROR: infeasible d:", distance, " v0:", v0, " v1:", v1, " vs:", v_small, " vl:", v_large);
+        SERIAL_ECHOLNPGM("CJ ERROR: infeasible target:", distance,
+          " minmimum_distance:", minmimum_distance,
+          " v0:", v0,
+          " v1:", v1,
+          " j:", j,
+          " a_max:", a_max
+        );
+
         v_peak = v_peak_min;
       } else if (distance - minmimum_distance > 0.01f) {
         for (int i = 0; i < 48; i++) {
@@ -208,6 +215,8 @@ public:
       phase_start_a[i] = 0.0f;
     }
     total_duration = 0.0f;
+    SERIAL_ECHOLNPGM("CJ ERROR: reset trajectory");
+
   }
 
 private:

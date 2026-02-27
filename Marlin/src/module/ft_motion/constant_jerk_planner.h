@@ -197,11 +197,12 @@ class ConstantJerkBlockPlanner {
     // Iteratively refine: split groups until junction constraints are met
     // Floor for left group size: when continuing from a boundary, the first
     float left_exit_speed;
-    float max_left_exit = -1;
+    uint32_t right_len = right_end - left_end;
+
     while (true) {
       // Right side, only backwards pass to calculate max_right_entry
       float max_right_entry = 0;
-      uint32_t right_len = right_end - left_end;
+      right_len = right_end - left_end;
       const float right_mm = sumDist(mm, left_end, right_end);
       const float right_a = minVal(accel, left_end, right_end);
       const float right_nominal = nominal[left_end];
@@ -224,15 +225,14 @@ class ConstantJerkBlockPlanner {
       float left_nominal = nominal[0];
 
       // Reverse pass
-      if (max_left_exit == -1) {
-        if (left_end == 1){
-          // left is single block, use precalculated entry
-          max_left_exit = entry_v[1];
-        } else {
-          // left is a super block, calculate its max exit speed
-          const float v_reach = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
-          max_left_exit = _MIN(v_reach, max_entry_speed[left_end]);
-        }
+      float max_left_exit; // TODO:, don't recalc when splitting right
+      if (left_end == 1){
+        // left is single block, use precalculated entry
+        max_left_exit = entry_v[1];
+      } else {
+        // left is a super block, calculate its max exit speed
+        const float v_reach = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
+        max_left_exit = _MIN(v_reach, max_entry_speed[left_end]);
       }
 
       float v_junction_candidate = _MIN(max_left_exit, max_right_entry, left_nominal, right_nominal);
@@ -259,17 +259,14 @@ class ConstantJerkBlockPlanner {
             if (right_len > 0) {
               right_end = left_end + right_len / 2;
               continue;
-            } else {
-              SERIAL_ECHOLNPGM("CJ ERROR: needs to split left but cant. left_end:", left_end, " min_left_size:", min_left_size, " right_end:", right_end);
-              right_end = left_end;
-              left_end = left_end / 2;
-              max_left_exit = -1; // force recalculate
-              continue;
             }
+            SERIAL_ECHOLNPGM("CJ ERROR: needs to split left but cant. left_end:", left_end, " min_left_size:", min_left_size, " right_end:", right_end);
+            right_end = left_end;
+            left_end = left_end / 2;
+            continue;
           }
           right_end = left_end;
           left_end = _MAX(left_end / 2, min_left_size);
-          max_left_exit = -1; // force recalculate
           continue;
         }
       }
@@ -285,7 +282,7 @@ class ConstantJerkBlockPlanner {
     // Store right group size as minimum left size for next planning cycle.
     // The right group determined our exit speed — if it becomes left next time,
     // splitting it smaller could make the entry speed infeasible.
-    min_left_size = right_end - left_end;
+    min_left_size = right_len;
 
     // Set up execution tracking
     orig_block_index = 0;
