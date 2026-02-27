@@ -103,41 +103,65 @@ public:
     j = jerk_in;
     distance = distance_in;
 
-    const float v_nominal = v_nominal_in;
     const float v_small = _MIN(v0, v1);
     const float v_large = _MAX(v0, v1);
 
-    float v_lo = v_large;
-    float v_peak = _MAX(v_large, v_nominal);
-    float s_ramps = cj_totalRampDist(v_peak, v_small, v_large, j, a_max);
+    float min_dist_at_nominal = cj_totalRampDist(v_nominal_in, v_small, v_large, j, a_max);
+    float v_peak = v_nominal_in;
+    if (min_dist_at_nominal > distance) {
+      float v_peak_max = v_nominal_in;
+      float v_peak_min = v_large;
 
-    if (s_ramps > distance) {
-      float v_hi = v_peak;
-      if (cj_totalRampDist(v_lo, v_small, v_large, j, a_max) > distance) {
-        // Ramp between v0 and v1 exceeds distance. Use v_lo as peak
-        // so entry/exit speeds are preserved (no discontinuity at boundaries).
-        SERIAL_ECHOLNPGM("CJ infeasible d:", distance, " v0:", v0, " v1:", v1, " vs:", v_small, " vl:", v_large);
-        v_peak = v_lo;
+      float minmimum_distance = cj_totalRampDist(v_large, v_small, v_large, j, a_max);
+      if (minmimum_distance > distance) {
+        // Ramp between v0 and v1 exceeds distance.
+        // Position won't be continuous, this should never happen
+        SERIAL_ECHOLNPGM("CJ ERROR: infeasible d:", distance, " v0:", v0, " v1:", v1, " vs:", v_small, " vl:", v_large);
+        v_peak = v_peak_min;
       }
       else {
+        float v_mid = v_peak_min; // often v_peak_min will already be perfect, so start with that one instead of the middle
         for (int i = 0; i < 48; i++) {
-          float mid = 0.5f * (v_lo + v_hi);
-          float s_mid = cj_totalRampDist(mid, v_small, v_large, j, a_max);
-          if (s_mid > distance)
-            v_hi = mid;
-          else
-            v_lo = mid;
-          if (distance - s_mid >= 0 && distance - s_mid < 0.01f) {
-            // Undershoot peak and cruise for 0.01mm instead of wasting cpu
-            break;
+          float s_mid = cj_totalRampDist(v_mid, v_small, v_large, j, a_max);
+          float overshoot = s_mid - distance;
+          if (overshoot > 0) {
+            v_peak_max = v_mid;
+          } else {
+            v_peak_min = v_mid;
+            if (-overshoot <= 0.01f) {
+              // Undershoot peak and cruise for 0.01mm instead of wasting cpu
+              break;
+            }
           }
+
           if (i==47){
-            SERIAL_ECHOLNPGM("FOR LOOP ENDED:", distance, " v0:", v0, " v1:", v1, " vs:", v_small, " vl:", v_large);
-            SERIAL_ECHOLNPGM("FOR LOOP ENDED:", v_lo, " v_lo:", v_lo, " v_hi:", v_hi, " mid:", mid);
+            float s_min = cj_totalRampDist(v_peak_min, v_small, v_large, j, a_max);
+            float s_max = cj_totalRampDist(v_peak_max, v_small, v_large, j, a_max);
+            SERIAL_ECHOLNPGM("CJ ERROR: FOR LOOP ENDED: i=", i,
+              " v0: ", v0,
+              " v1: ", v1,
+
+              " v_peak_min: ", v_peak_min,
+              " s_min: ", s_min,
+              " v_peak_max: ", v_peak_max,
+              " s_max: ", s_max,
+
+              " v_delta: ", v_peak_max-v_peak_min,
+
+              " v_mid: ", v_mid,
+              " s_mid: ", s_mid,
+
+              " target_distance: ", distance,
+              " overshoot: ", overshoot
+            );
+
+          // FOR LOOP ENDED:0.50 v0:44.54 v1:7.91 vs:7.91 vl:44.54
+          // FOR LOOP ENDED:44.54 v_peak_min:44.54 v_peak_max:44.54 v_mid:44.54
 
           }
+          v_mid = 0.5f * (v_peak_min + v_peak_max);
         }
-        v_peak = v_lo;
+        v_peak = v_peak_min;
       }
     }
 
@@ -145,7 +169,7 @@ public:
     float s_accel = cj_planRamp(v0, v_peak, j, a_max, false, t1, t2, t3);
     float s_decel = cj_planRamp(v1, v_peak, j, a_max, true, t5, t6, t7);
 
-    s_ramps = s_accel + s_decel;
+    float s_ramps = s_accel + s_decel;
     if (v_peak > 0.0f && distance > s_ramps)
       t4 = (distance - s_ramps) / v_peak;
 
