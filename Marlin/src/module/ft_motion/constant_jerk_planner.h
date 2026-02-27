@@ -181,38 +181,33 @@ class ConstantJerkBlockPlanner {
 
     // Find right-compatible group starting at left_end
     uint8_t right_end = left_end;
-    if (left_end < block_count) {
-      float r_a_min = accel[left_end], r_a_max = accel[left_end];
-      for (uint8_t i = left_end; i < block_count; i++) {
-        if (nominal[i] != nominal[left_end]) break;
-        float new_a_min = _MIN(r_a_min, accel[i]);
-        float new_a_max = _MAX(r_a_max, accel[i]);
-        if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
-        r_a_min = new_a_min;
-        r_a_max = new_a_max;
-        right_end++;
-      }
+    float r_a_min = accel[left_end], r_a_max = accel[left_end];
+    for (uint8_t i = left_end; i < block_count; i++) {
+      if (nominal[i] != nominal[left_end]) break;
+      float new_a_min = _MIN(r_a_min, accel[i]);
+      float new_a_max = _MAX(r_a_max, accel[i]);
+      if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
+      r_a_min = new_a_min;
+      r_a_max = new_a_max;
+      right_end++;
     }
 
     // Iteratively refine: split groups until junction constraints are met
     // Floor for left group size: when continuing from a boundary, the first
     float left_exit_speed;
-    uint32_t right_len = right_end - left_end;
+    uint32_t right_len;
 
     while (true) {
       // Right side, only backwards pass to calculate max_right_entry
-      float max_right_entry = 0;
       right_len = right_end - left_end;
       const float right_mm = sumDist(mm, left_end, right_end);
       const float right_a = minVal(accel, left_end, right_end);
       const float right_nominal = nominal[left_end];
 
+      float max_right_entry;
       if (left_end == block_count) {
         // no right side, left must break to standstill
         max_right_entry = 0;
-      } else if (right_len < 2){
-        // right is not a super block, use precalculated entry
-        max_right_entry = entry_v[right_end - 1];
       } else {
         // right is a super block, calculate its max entry speed
         const float v_reach = maxReachableSpeed(entry_v[right_end], right_mm, right_nominal, right_a, jerk_max);
@@ -226,14 +221,9 @@ class ConstantJerkBlockPlanner {
 
       // Reverse pass
       float max_left_exit; // TODO:, don't recalc when splitting right
-      if (left_end == 1){
-        // left is single block, use precalculated entry
-        max_left_exit = entry_v[1];
-      } else {
-        // left is a super block, calculate its max exit speed
-        const float v_reach = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
-        max_left_exit = _MIN(v_reach, max_entry_speed[left_end]);
-      }
+
+      const float v_reach = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
+      max_left_exit = _MIN(v_reach, max_entry_speed[left_end]);
 
       float v_junction_candidate = _MIN(max_left_exit, max_right_entry, left_nominal, right_nominal);
 
@@ -256,7 +246,7 @@ class ConstantJerkBlockPlanner {
           // Left too aggressive - need to split, but not smaller than
           // the previous right group size (which determined our entry speed)
           if (left_end == min_left_size) {
-            if (right_len > 0) {
+            if (right_len > 1) {
               right_end = left_end + right_len / 2;
               continue;
             }
