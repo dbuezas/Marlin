@@ -231,6 +231,7 @@ class ConstantJerkBlockPlanner {
         } else {
           // left is a super block, calculate its max exit speed
           max_left_exit = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
+          max_left_exit = _MIN(max_left_exit, max_entry_speed[left_end]); // TODO: recheck if necessary
         }
       }
 
@@ -251,7 +252,7 @@ class ConstantJerkBlockPlanner {
         float left_v_peak = peakSpeed(entry_v[0], v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
         float left_min_jv = cum_max_entry_speed[left_end - 1];
 
-        if (left_end > 1 && left_v_peak > left_min_jv) {
+        if (left_v_peak > left_min_jv) {
           // Left too aggressive - need to split, but not smaller than
           // the previous right group size (which determined our entry speed)
           if (left_end == min_left_size) {
