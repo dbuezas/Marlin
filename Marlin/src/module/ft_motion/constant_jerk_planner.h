@@ -135,6 +135,7 @@ class ConstantJerkBlockPlanner {
     }
     if (block_count == 0) {
       // should never happen
+      SERIAL_ECHOLNPGM("CJ ERROR: block_count == 0");
       traj.reset();
       return false;
     }
@@ -213,8 +214,7 @@ class ConstantJerkBlockPlanner {
         max_right_entry = entry_v[right_end - 1];
       } else {
         // right is a super block, calculate its max entry speed
-        const float right_exit_speed = entry_v[right_end];
-        const float v_reach = maxReachableSpeed(right_exit_speed, right_mm, right_nominal, right_a, jerk_max);
+        const float v_reach = maxReachableSpeed(entry_v[right_end], right_mm, right_nominal, right_a, jerk_max);
         max_right_entry = _MIN(v_reach, max_entry_speed[left_end]);
       }
 
@@ -230,8 +230,8 @@ class ConstantJerkBlockPlanner {
           max_left_exit = entry_v[1];
         } else {
           // left is a super block, calculate its max exit speed
-          max_left_exit = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
-          max_left_exit = _MIN(max_left_exit, max_entry_speed[left_end]); // TODO: recheck if necessary
+          const float v_reach = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
+          max_left_exit = _MIN(v_reach, max_entry_speed[left_end]);
         }
       }
 
