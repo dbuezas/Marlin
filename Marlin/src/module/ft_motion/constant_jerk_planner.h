@@ -258,8 +258,13 @@ class ConstantJerkBlockPlanner {
             if (right_len > 0) {
               right_end = left_end + right_len / 2;
               continue;
-            } else
+            } else {
               SERIAL_ECHOLNPGM("CJ ERROR: needs to split left but cant. left_end:", left_end, " min_left_size:", min_left_size, " right_end:", right_end);
+              right_end = left_end;
+              left_end = left_end / 2;
+              max_left_exit = -1; // force recalculate
+              continue;
+            }
           }
           right_end = left_end;
           left_end = _MAX(left_end / 2, min_left_size);

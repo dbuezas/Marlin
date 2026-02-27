@@ -118,10 +118,9 @@ public:
         // Position won't be continuous, this should never happen
         SERIAL_ECHOLNPGM("CJ ERROR: infeasible d:", distance, " v0:", v0, " v1:", v1, " vs:", v_small, " vl:", v_large);
         v_peak = v_peak_min;
-      }
-      else {
-        float v_mid = v_peak_min; // often v_peak_min will already be perfect, so start with that one instead of the middle
+      } else if (distance - minmimum_distance > 0.01f) {
         for (int i = 0; i < 48; i++) {
+          float v_mid = 0.5f * (v_peak_min + v_peak_max);
           float s_mid = cj_totalRampDist(v_mid, v_small, v_large, j, a_max);
           float overshoot = s_mid - distance;
           if (overshoot > 0) {
@@ -133,33 +132,6 @@ public:
               break;
             }
           }
-
-          if (i==47){
-            float s_min = cj_totalRampDist(v_peak_min, v_small, v_large, j, a_max);
-            float s_max = cj_totalRampDist(v_peak_max, v_small, v_large, j, a_max);
-            SERIAL_ECHOLNPGM("CJ ERROR: FOR LOOP ENDED: i=", i,
-              " v0: ", v0,
-              " v1: ", v1,
-
-              " v_peak_min: ", v_peak_min,
-              " s_min: ", s_min,
-              " v_peak_max: ", v_peak_max,
-              " s_max: ", s_max,
-
-              " v_delta: ", v_peak_max-v_peak_min,
-
-              " v_mid: ", v_mid,
-              " s_mid: ", s_mid,
-
-              " target_distance: ", distance,
-              " overshoot: ", overshoot
-            );
-
-          // FOR LOOP ENDED:0.50 v0:44.54 v1:7.91 vs:7.91 vl:44.54
-          // FOR LOOP ENDED:44.54 v_peak_min:44.54 v_peak_max:44.54 v_mid:44.54
-
-          }
-          v_mid = 0.5f * (v_peak_min + v_peak_max);
         }
         v_peak = v_peak_min;
       }
