@@ -123,12 +123,7 @@ public:
           " j:", j,
           " a_max:", a_max
         );
-
-        v_peak = v_peak_min;
-      } else if (distance - minmimum_distance <= 0.01f) {
-        // v_large barely fits, use it directly
-        v_peak = v_peak_min;
-      } else {
+      } else if (distance - minmimum_distance > 0.01f) {
         for (int i = 0; i < 48; i++) {
           float v_mid = 0.5f * (v_peak_min + v_peak_max);
           float s_mid = cj_totalRampDist(v_mid, v_small, v_large, j, a_max);
@@ -143,8 +138,8 @@ public:
             }
           }
         }
-        v_peak = v_peak_min;
       }
+      v_peak = v_peak_min;
     }
 
     float t1, t2, t3, t4 = 0, t5, t6, t7;
