@@ -79,6 +79,16 @@
  *     (time-reversed velocity profile has equal area).
  *     This means maxReachableSpeed(v_a, dist) ≥ v_b ⟹ decel from v_b
  *     to v_a also fits in dist. Critical for plan_full feasibility.
+ * ─── plan_full feasibility ───
+ *
+ *   plan_full(v0, v1, a_max, j, dist, nominal) requires:
+ *     cj_planRamp(min(v0,v1), max(v0,v1), j, a_max) ≤ dist
+ *   i.e. the ramp between the two boundary speeds must fit in dist.
+ *
+ *   The planner must ensure both directions:
+ *     maxReachableSpeed(v0, dist, ...) ≥ v1   — accel direction
+ *     minReachableSpeed(v0, dist, ...) ≤ v1   — decel direction
+ *   The junction candidate is clamped between these bounds.
  *
  * ─── Backward pass ───
  *
