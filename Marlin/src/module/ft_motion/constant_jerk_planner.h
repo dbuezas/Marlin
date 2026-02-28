@@ -54,21 +54,31 @@
  *     accel     = min(accel[a..b))        (conservative)
  *     nominal   = nominal[a]              (all blocks in group share this)
  *
+ *   The merge compatibility check ensures max(accel)/min(accel) ≤ CJP_MERGE_AMAX_RATIO
+ *   (1.1). Using min(accel) is conservative: the superblock allows less speed
+ *   than per-block pass would, so superblock-feasible ⇒ per-block feasible.
+ *
  * ─── Key functions and their properties ───
  *
  *   maxReachableSpeed(v_from, dist, nominal, a_max, j_max) → v_to:
  *     The max speed reachable from v_from over dist under jerk/accel limits.
  *     Monotone in dist: more distance → higher or equal v_to.
  *     Monotone in v_from: higher start → higher or equal v_to.
+ *     Monotone in a_max: higher accel limit → higher or equal v_to.
  *
  *   peakSpeed(v_entry, v_exit, a_max, j_max, dist, nominal) → v_peak:
  *     The peak velocity of an S-curve with given boundary speeds over dist.
  *     Monotone in v_entry and v_exit: raising either raises v_peak.
  *     Monotone in dist: more distance → higher or equal v_peak.
+ *     Monotone in a_max: higher accel limit → higher or equal v_peak.
  *
  *   cj_planRamp(v_start, v_peak, j, a_max, decel, ...) → ramp_dist:
  *     Distance consumed by a 3-phase ramp between v_start and v_peak.
  *     Monotone in (v_peak - v_start): larger speed change → more distance.
+ *     Symmetric: accel and decel ramps consume the same distance
+ *     (time-reversed velocity profile has equal area).
+ *     This means maxReachableSpeed(v_a, dist) ≥ v_b ⟹ decel from v_b
+ *     to v_a also fits in dist. Critical for plan_full feasibility.
  *
  * ─── Backward pass ───
  *
@@ -92,10 +102,9 @@
  *     max_entry = min(maxReachableSpeed(v_exit, sum(mm[a..b)), ...),
  *                     vmax_junction[a])
  *
- *   This is conservative compared to per-block backward pass because:
- *     min(accel[a..b)) ≤ accel[i] for any i in [a..b)
- *   So the superblock reaches a lower-or-equal speed than individual blocks
- *   would. Any trajectory feasible for the superblock is feasible per-block.
+ *   Both left and right superblocks use min(accel), which is conservative:
+ *   per-block backward pass with individual accel[i] ≥ min(accel) would
+ *   allow equal or higher speeds. So superblock-feasible ⇒ per-block feasible.
  *
  * ─── Merge algorithm ───
  *
@@ -126,23 +135,27 @@
  *       V_e = max_safe_entry[R] from previous cycle.
  *
  *   (1) Decel feasibility: left_entry_speed = V_j (previous exit).
- *       The previous right superblock [L..R) was validated to decelerate
- *       from V_j to V_e over sum(mm[L..R)) with min(accel[L..R)).
- *       Now those same blocks are the left group. The tail beyond them
- *       is the same or longer (new blocks may have arrived), so by
- *       backward-monotone, the safe entry is ≥ V_e ≥ what's needed.
+ *       The previous right superblock [L..R) could decelerate from V_j
+ *       to V_e over sum(mm[L..R)) with min(accel[L..R)).
+ *       Now those same blocks are the left group, also using min(accel)
+ *       over the same blocks — identical parameters.
+ *       The tail beyond is the same or longer (new blocks may arrive),
+ *       so by backward-monotone, max_safe_entry[R] ≥ V_e.
  *       min_left_size prevents splitting left below len(old right),
- *       preserving the distance and min-accel that made V_j feasible.
+ *       preserving the distance over which V_j was validated.
  *
  *   (2) Interior junction feasibility: previous cycle validated
- *       peakSpeed(V_j, V_e, old_right) ≤ min interior vmax_junction.
+ *       peakSpeed(V_j, V_e, min_a, ...) ≤ min interior vmax_junction
+ *       where min_a = min(accel) of the right group.
+ *       Both left and right use min(accel), and when left_end == min_left_size
+ *       the blocks are identical, so min_a is the same value.
  *       In the current cycle, the new right group may be longer, so
  *       max_right_entry may exceed V_e. Since peakSpeed is monotone
  *       in exit speed, a higher exit could raise the peak above the
  *       interior junction limits. When splitting can't resolve this
  *       (left_end == min_left_size, right_len == 1), we fall back to
- *       max_safe_exit (= V_e), which is known-valid from the previous
- *       cycle's validation.
+ *       max_safe_exit (= V_e), which reproduces the exact same
+ *       peakSpeed(V_j, V_e, min_a) that was validated last cycle.
  */
 
 /**
@@ -271,7 +284,7 @@ class ConstantJerkBlockPlanner {
         if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
         cum_max_a = new_a_max;
         cum_mm[i] = cum_mm[i - 1] + mm[i];
-        cum_min_a[i] = new_a_max;
+        cum_min_a[i] = new_a_min;
         cum_vmax_junction[i] = (i == 1) ? vmax_junction[1] : _MIN(cum_vmax_junction[i - 1], vmax_junction[i]);
         left_end++;
       }
@@ -298,17 +311,20 @@ class ConstantJerkBlockPlanner {
     uint32_t right_len;
 
     while (true) {
-      // Right superblock [left_end..right_end): backward pass as single block
       right_len = right_end - left_end;
-      const float right_mm = sumDist(mm, left_end, right_end);
-      const float right_a = minVal(accel, left_end, right_end);
-      const float right_nominal = nominal[left_end];
+      const bool have_right = left_end < block_count;
+
+      // Right superblock [left_end..right_end) parameters.
+      // Only valid when have_right; guarded to avoid out-of-bounds reads.
+      const float right_mm = have_right ? sumDist(mm, left_end, right_end) : 0;
+      const float right_a = have_right ? minVal(accel, left_end, right_end) : 0;
+      const float right_nominal = have_right ? nominal[left_end] : 0;
 
       // max_right_entry: max speed right superblock can accept and still
       // decelerate to max_safe_entry[right_end] over right_mm.
       // Conservative: uses min(accel) so any per-block pass would allow ≥ this.
       float max_right_entry;
-      if (left_end == block_count) {
+      if (!have_right) {
         max_right_entry = 0;  // no right side → left must stop
       } else {
         const float v_reach = maxReachableSpeed(max_safe_entry[right_end], right_mm, right_nominal, right_a, jerk_max);
@@ -321,8 +337,10 @@ class ConstantJerkBlockPlanner {
       float left_nominal = nominal[0];
 
       // max_left_exit: max speed left superblock can reach from left_entry_speed.
+      // Capped by junction ceiling at left_end (entry of right/next group).
       const float v_reach = maxReachableSpeed(left_entry_speed, left_mm, left_nominal, left_a, jerk_max);
-      float max_left_exit = _MIN(v_reach, vmax_junction[left_end]);
+      const float junction_cap = have_right ? vmax_junction[left_end] : 0;
+      float max_left_exit = _MIN(v_reach, junction_cap);
 
       // Junction = min of what left can provide, what right can accept, and nominals.
       float v_junction_candidate = _MIN(max_left_exit, max_right_entry, left_nominal, right_nominal);
