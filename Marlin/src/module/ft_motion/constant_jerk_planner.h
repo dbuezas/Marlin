@@ -227,7 +227,7 @@ class ConstantJerkBlockPlanner {
       if (right_len > 1) {
         // Check v_peak against min interior junction limit
         float right_v_peak = peakSpeed(max_safe_entry[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal);
-        float right_min_internal_jv = minVal(vmax_junction, left_end + 1, right_end - 1);
+        float right_min_internal_jv = minVal(vmax_junction, left_end + 1, right_end);
 
         if (right_v_peak > right_min_internal_jv) {
           // Right group too agressive - need to split
