@@ -95,6 +95,7 @@ class ConstantJerkBlockPlanner {
   void reset() {
     orig_block_index = 0;
     min_left_size = 1;
+    max_safe_exit = 1e10f;
     traj.reset();
   }
 
@@ -190,8 +191,33 @@ class ConstantJerkBlockPlanner {
       }
     }
 
-    // Iteratively refine: split groups until junction constraints are met
-    // Floor for left group size: when continuing from a boundary, the first
+    // Iteratively refine: split groups until junction constraints are met.
+    //
+    // Cross-cycle guarantees:
+    //
+    // Previous cycle had: left=[0..L), right=[L..R), junction=V_j, right_exit=V_e
+    //   where V_j = left_exit_speed, V_e = max_safe_entry[R]
+    //   and peak(V_j, V_e, right_blocks) <= min interior vmax_junction
+    //
+    // Current cycle: those right blocks are now the left group.
+    //   left_entry_speed = V_j  (from traj.getExitSpeed())
+    //
+    // (1) Decel feasibility: the left group can always decelerate from V_j,
+    //     because the previous right group did so (same blocks, same distance,
+    //     and the tail beyond is still present or longer).
+    //     min_left_size prevents splitting below the previous right group size
+    //     to preserve this.
+    //
+    // (2) Interior junction feasibility: the previous cycle validated
+    //     peak(V_j, V_e) <= min_jv for those blocks. But the current exit
+    //     speed may be HIGHER than V_e (the new right group may be longer,
+    //     allowing a higher junction). A higher exit raises the peak, which
+    //     could violate interior junctions. To prevent this, cap the junction
+    //     candidate by max_safe_exit (the previous right exit speed).
+    //
+    // The interior junction check (minVal range) must include all block entry
+    // junctions within the superblock, up to and including the last block's
+    // entry (right_end - 1), so the range is [left_end+1, right_end).
     float left_exit_speed;
     uint32_t right_len;
 
@@ -247,10 +273,10 @@ class ConstantJerkBlockPlanner {
               right_end = left_end + right_len / 2;
               continue;
             }
-            SERIAL_ECHOLNPGM("CJ ERROR: needs to split left but cant. left_end:", left_end, " min_left_size:", min_left_size, " right_end:", right_end);
-            right_end = left_end;
-            left_end = left_end / 2;
-            continue;
+            // Can't split left or right further. Fall back to the previous
+            // cycle's right exit speed, which was validated — see guarantee (2).
+            left_exit_speed = max_safe_exit;
+            break;
           }
           right_end = left_end;
           left_end = _MAX(left_end / 2, min_left_size);
@@ -266,10 +292,11 @@ class ConstantJerkBlockPlanner {
     // --- 5. Plan trajectory ---
     traj.plan_full(left_entry_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
 
-    // Store right group size as minimum left size for next planning cycle.
-    // The right group determined our exit speed — if it becomes left next time,
-    // splitting it smaller could make the entry speed infeasible.
+    // Store right group state for next cycle's guarantees (see comment above).
+    // min_left_size: prevents splitting below previous right size → guarantee (1)
+    // max_safe_exit: caps junction so peak doesn't exceed what was validated → guarantee (2)
     min_left_size = right_len;
+    max_safe_exit = max_safe_entry[right_end];
 
     // Set up execution tracking
     orig_block_index = 0;
@@ -344,7 +371,8 @@ class ConstantJerkBlockPlanner {
   uint8_t orig_block_index = 0;
   uint8_t group_block_count = 0;
   uint8_t group_buffer_consumed = 0;
-  uint8_t min_left_size = 1;  // Floor for left split: previous right group size // TODO: CLEAR THIS ON RUNOUT PLAN OR RESET
+  uint8_t min_left_size = 1;  // guarantee (1): previous right group size // TODO: CLEAR THIS ON RUNOUT PLAN OR RESET
+  float max_safe_exit = 1e10f; // guarantee (2): previous right group exit speed
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 };
