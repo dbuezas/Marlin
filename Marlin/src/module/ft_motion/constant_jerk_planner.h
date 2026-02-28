@@ -111,7 +111,7 @@ class ConstantJerkBlockPlanner {
     float mm[BLOCK_BUFFER_SIZE];
     float nominal[BLOCK_BUFFER_SIZE];
     float accel[BLOCK_BUFFER_SIZE];
-    float max_entry_speed[BLOCK_BUFFER_SIZE];  // max entry speed ceiling per block
+    float vmax_junction[BLOCK_BUFFER_SIZE];  // max entry speed ceiling per block
 
     uint8_t block_count = 0;
 
@@ -130,7 +130,7 @@ class ConstantJerkBlockPlanner {
       mm[block_count] = blk->millimeters;
       nominal[block_count] = blk->nominal_speed;
       accel[block_count] = blk->acceleration;
-      max_entry_speed[block_count] = blk->vmax_junction;
+      vmax_junction[block_count] = blk->vmax_junction;
       block_count++;
     }
     if (block_count == 0) {
@@ -140,56 +140,54 @@ class ConstantJerkBlockPlanner {
       return false;
     }
 
-    float entry_v[BLOCK_BUFFER_SIZE + 1];
+    float max_safe_entry[BLOCK_BUFFER_SIZE + 1];
     // Backward pass
-    entry_v[block_count] = 0.0f;
+    max_safe_entry[block_count] = 0.0f;
     for (int8_t i = block_count - 1; i > 0; i--) {
-      float v_reachable = maxReachableSpeed(entry_v[i + 1], mm[i], nominal[i], accel[i], jerk_max);
-      entry_v[i] = _MIN(v_reachable, max_entry_speed[i]);
+      float v_reachable = maxReachableSpeed(max_safe_entry[i + 1], mm[i], nominal[i], accel[i], jerk_max);
+      max_safe_entry[i] = _MIN(v_reachable, vmax_junction[i]);
     }
-
-    // Forward pass
-    entry_v[0] = traj.getExitSpeed();
-    for (uint8_t i = 0; i < block_count - 1; i++) {
-      float v_reachable = maxReachableSpeed(entry_v[i], mm[i], nominal[i], accel[i], jerk_max);
-      entry_v[i + 1] = _MIN(v_reachable, entry_v[i + 1]);
-    }
+    float left_entry_speed = traj.getExitSpeed();
 
     // Find left-compatible group, tracking cumulative mm, min accel, min junction
-    float group_a_min = accel[0], group_a_max = accel[0];
     float cum_mm[BLOCK_BUFFER_SIZE];      // cum_mm[i] = sumDist(mm, i+1)
     float cum_min_a[BLOCK_BUFFER_SIZE];   // cum_min_a[i] = minVal(accel, 0, i+1)
-    float cum_max_entry_speed[BLOCK_BUFFER_SIZE];  // cum_max_entry_speed[i] = minVal(max_entry_speed, 1, i+1) for i>=1
-    cum_mm[0] = mm[0];
-    cum_min_a[0] = accel[0];
-    cum_max_entry_speed[0] = entry_v[0];  // unused but initialized
+    float cum_vmax_junction[BLOCK_BUFFER_SIZE];  // cum_vmax_junction[i] = minVal(vmax_junction, 1, i+1) for i>=1
+
 
     uint8_t left_end = 1;
-    const uint8_t max_left_end = _MIN(block_count, BLOCK_BUFFER_SIZE / 2);
-    for (uint8_t i = 1; i < max_left_end; i++) {
-      if (nominal[i] != nominal[0]) break;
-      float new_a_min = _MIN(group_a_min, accel[i]);
-      float new_a_max = _MAX(group_a_max, accel[i]);
-      if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
-      group_a_min = new_a_min;
-      group_a_max = new_a_max;
-      cum_mm[i] = cum_mm[i - 1] + mm[i];
-      cum_min_a[i] = _MIN(cum_min_a[i - 1], accel[i]);
-      cum_max_entry_speed[i] = (i == 1) ? max_entry_speed[1] : _MIN(cum_max_entry_speed[i - 1], max_entry_speed[i]);
-      left_end++;
+    {
+      cum_mm[0] = mm[0];
+      cum_min_a[0] = accel[0];
+      cum_vmax_junction[0] = left_entry_speed;  // unused
+      float cum_max_a = accel[0];
+      const uint8_t max_left_end = _MIN(block_count, BLOCK_BUFFER_SIZE / 2);
+      for (uint8_t i = 1; i < max_left_end; i++) {
+        if (nominal[i] != nominal[0]) break;
+        float new_a_min = _MIN(cum_min_a[i - 1], accel[i]);
+        float new_a_max = _MAX(cum_max_a, accel[i]);
+        if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
+        cum_max_a = new_a_max;
+        cum_mm[i] = cum_mm[i - 1] + mm[i];
+        cum_min_a[i] = new_a_max;
+        cum_vmax_junction[i] = (i == 1) ? vmax_junction[1] : _MIN(cum_vmax_junction[i - 1], vmax_junction[i]);
+        left_end++;
+      }
     }
 
     // Find right-compatible group starting at left_end
     uint8_t right_end = left_end;
-    float r_a_min = accel[left_end], r_a_max = accel[left_end];
-    for (uint8_t i = left_end; i < block_count; i++) {
-      if (nominal[i] != nominal[left_end]) break;
-      float new_a_min = _MIN(r_a_min, accel[i]);
-      float new_a_max = _MAX(r_a_max, accel[i]);
-      if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
-      r_a_min = new_a_min;
-      r_a_max = new_a_max;
-      right_end++;
+    {
+      float cum_a_min = accel[left_end], cum_a_max = accel[left_end];
+      for (uint8_t i = left_end; i < block_count; i++) {
+        if (nominal[i] != nominal[left_end]) break;
+        float new_a_min = _MIN(cum_a_min, accel[i]);
+        float new_a_max = _MAX(cum_a_max, accel[i]);
+        if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
+        cum_a_min = new_a_min;
+        cum_a_max = new_a_max;
+        right_end++;
+      }
     }
 
     // Iteratively refine: split groups until junction constraints are met
@@ -210,8 +208,8 @@ class ConstantJerkBlockPlanner {
         max_right_entry = 0;
       } else {
         // right is a super block, calculate its max entry speed
-        const float v_reach = maxReachableSpeed(entry_v[right_end], right_mm, right_nominal, right_a, jerk_max);
-        max_right_entry = _MIN(v_reach, max_entry_speed[left_end]);
+        const float v_reach = maxReachableSpeed(max_safe_entry[right_end], right_mm, right_nominal, right_a, jerk_max);
+        max_right_entry = _MIN(v_reach, vmax_junction[left_end]);
       }
 
       // Left superblock: only forward pass to calculate max_left_exit
@@ -220,27 +218,26 @@ class ConstantJerkBlockPlanner {
       float left_nominal = nominal[0];
 
       // Reverse pass
-      float max_left_exit; // TODO:, don't recalc when splitting right
 
-      const float v_reach = maxReachableSpeed(entry_v[0], left_mm, left_nominal, left_a, jerk_max);
-      max_left_exit = _MIN(v_reach, max_entry_speed[left_end]);
+      const float v_reach = maxReachableSpeed(left_entry_speed, left_mm, left_nominal, left_a, jerk_max);
+      float max_left_exit = _MIN(v_reach, vmax_junction[left_end]); // TODO: reuse when splitting right
 
       float v_junction_candidate = _MIN(max_left_exit, max_right_entry, left_nominal, right_nominal);
 
       if (right_len > 1) {
         // Check v_peak against min interior junction limit
-        float right_v_peak = peakSpeed(entry_v[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal);
-        float right_min_jv = minVal(max_entry_speed, left_end, right_end);
+        float right_v_peak = peakSpeed(max_safe_entry[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal);
+        float right_min_internal_jv = minVal(vmax_junction, left_end + 1, right_end - 1);
 
-        if (right_v_peak > right_min_jv && right_len > 1) {
+        if (right_v_peak > right_min_internal_jv) {
           // Right group too agressive - need to split
           right_end = left_end + right_len / 2;
           continue;
         }
       }
       if (left_end > 1) {
-        float left_v_peak = peakSpeed(entry_v[0], v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
-        float left_min_jv = cum_max_entry_speed[left_end - 1];
+        float left_v_peak = peakSpeed(left_entry_speed, v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
+        float left_min_jv = cum_vmax_junction[left_end - 1];
 
         if (left_v_peak > left_min_jv) {
           // Left too aggressive - need to split, but not smaller than
@@ -267,7 +264,7 @@ class ConstantJerkBlockPlanner {
 
 
     // --- 5. Plan trajectory ---
-    traj.plan_full(entry_v[0], left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
+    traj.plan_full(left_entry_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
 
     // Store right group size as minimum left size for next planning cycle.
     // The right group determined our exit speed — if it becomes left next time,
