@@ -88,8 +88,11 @@
  *
  *   The planner must ensure both directions:
  *     maxReachableSpeed(v0, dist, ...) ≥ v1   — accel direction
- *     minReachableSpeed(v0, dist, ...) ≤ v1   — decel direction
- *   The junction candidate is clamped between these bounds.
+ *     maxReachableSpeed(v1, dist, ...) ≥ v0   — decel direction (by ramp symmetry)
+ *   The accel direction is ensured by forward-pass construction.
+ *   The decel direction is checked explicitly: if
+ *     maxReachableSpeed(v_junction, left_mm, ...) < left_entry_speed
+ *   the junction is infeasible and the groups are split.
  *
  * ─── Backward pass ───
  *
@@ -164,17 +167,17 @@
  *       preserving the distance over which V_j was validated.
  *
  *   (2) Interior junction feasibility: previous cycle validated
- *       peakSpeed(V_j, V_e, min_a, ...) ≤ min interior vmax_junction
- *       where min_a = min(accel) of the right group.
- *       Both left and right use min(accel), and when left_end == min_left_size
- *       the blocks are identical, so min_a is the same value.
+ *       peakSpeed(V_j, V_e, right_a, ...) ≤ min interior vmax_junction
+ *       where right_a = min(accel) of the right group.
+ *       The new left group uses cum_min_a = max(accel) of those same blocks,
+ *       which is ≤ right_a * CJP_MERGE_AMAX_RATIO (bounded by merge check).
  *       In the current cycle, the new right group may be longer, so
  *       max_right_entry may exceed V_e. Since peakSpeed is monotone
  *       in exit speed, a higher exit could raise the peak above the
  *       interior junction limits. When splitting can't resolve this
  *       (left_end == min_left_size, right_len == 1), we fall back to
- *       max_safe_exit (= V_e), which reproduces the exact same
- *       peakSpeed(V_j, V_e, min_a) that was validated last cycle.
+ *       max_safe_exit (= V_e), which reproduces approximately the same
+ *       peak (slightly higher due to cum_min_a ≥ right_a, bounded by 1.1x).
  */
 
 /**
@@ -282,7 +285,7 @@ class ConstantJerkBlockPlanner {
 
     // Left-compatible group: cumulative superblock parameters for [0..i+1).
     //   cum_mm[i]             = sum(mm[0..i+1))            — superblock distance
-    //   cum_min_a[i]          = min(accel[0..i+1))         — conservative accel
+    //   cum_min_a[i]          = max(accel[0..i+1))         — within CJP_MERGE_AMAX_RATIO of min
     //   cum_vmax_junction[i]  = min(vmax_junction[1..i+1)) — tightest interior junction
     float cum_mm[BLOCK_BUFFER_SIZE];
     float cum_min_a[BLOCK_BUFFER_SIZE];
@@ -303,7 +306,7 @@ class ConstantJerkBlockPlanner {
         if (new_a_max > new_a_min * CJP_MERGE_AMAX_RATIO) break;
         cum_max_a = new_a_max;
         cum_mm[i] = cum_mm[i - 1] + mm[i];
-        cum_min_a[i] = new_a_min;
+        cum_min_a[i] = new_a_max;
         cum_vmax_junction[i] = (i == 1) ? vmax_junction[1] : _MIN(cum_vmax_junction[i - 1], vmax_junction[i]);
         left_end++;
       }
