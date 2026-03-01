@@ -92,7 +92,8 @@ public:
 
   // Plan with explicit jerk and a_max (used by the block merging planner).
   // Jerk comes from cfg.jerk_max, passed through by the caller.
-  void plan_full(float initial_speed_in, float final_speed_in,
+  // Returns false if infeasible (ramp between v0 and v1 exceeds distance).
+  bool plan_full(float initial_speed_in, float final_speed_in,
                  float accel_max_in, float jerk_in,
                  float distance_in, float v_nominal_in) {
     // reset();
@@ -106,6 +107,7 @@ public:
     const float v_small = _MIN(v0, v1);
     const float v_large = _MAX(v0, v1);
 
+    bool feasible = true;
     float min_dist_at_nominal = cj_totalRampDist(v_nominal_in, v_small, v_large, j, a_max);
     float v_peak = v_nominal_in;
     if (min_dist_at_nominal > distance) {
@@ -116,6 +118,7 @@ public:
       if (minmimum_distance > distance) {
         // Ramp between v0 and v1 exceeds distance.
         // Position won't be continuous, this should never happen
+        feasible = false;
         SERIAL_ECHOLNPGM("CJ ERROR: infeasible target:", distance,
           " minmimum_distance:", minmimum_distance,
           " v0:", v0,
@@ -156,6 +159,7 @@ public:
 
     total_duration = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     buildPhaseCache();
+    return feasible;
   }
 
   void planRunout(const float duration) override {

@@ -423,7 +423,29 @@ class ConstantJerkBlockPlanner {
 
 
     // --- 5. Plan trajectory ---
-    traj.plan_full(left_entry_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
+    const bool feasible = traj.plan_full(left_entry_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
+    if (!feasible) {
+      SERIAL_ECHOLNPGM("CJ DIAG: left_end:", left_end, " right_end:", right_end,
+        " min_left_size:", min_left_size, " max_safe_exit:", max_safe_exit);
+      for (uint8_t i = 0; i < block_count; i++)
+        SERIAL_ECHOLNPGM("CJ DIAG: block ", i,
+          " mm:", mm[i], " nom:", nominal[i], " a:", accel[i], " jv:", vmax_junction[i]);
+      SERIAL_ECHOLNPGM("CJ DIAG prev: left_end:", prev_left_end,
+        " right_end:", prev_right_end, " entry:", prev_left_entry_speed);
+      for (uint8_t i = 0; i < prev_block_count; i++)
+        SERIAL_ECHOLNPGM("CJ DIAG prev block ", i,
+          " mm:", prev_blocks[i].mm, " nom:", prev_blocks[i].nom,
+          " a:", prev_blocks[i].a, " jv:", prev_blocks[i].jv);
+    }
+
+    // Save snapshot for diagnostics on next cycle's failure
+    prev_block_count = block_count;
+    prev_left_end = left_end;
+    prev_right_end = right_end;
+    prev_left_entry_speed = left_entry_speed;
+    for (uint8_t i = 0; i < block_count; i++) {
+      prev_blocks[i] = { mm[i], nominal[i], accel[i], vmax_junction[i] };
+    }
 
     // Store right group state for next cycle's cross-cycle guarantees:
     //   min_left_size = right_len        → (1) preserves decel feasibility distance
@@ -508,4 +530,12 @@ class ConstantJerkBlockPlanner {
   float max_safe_exit = 1e10f; // (2): previous right group exit — known-valid fallback
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
+
+  // Previous cycle snapshot for diagnostics
+  struct BlockSnap { float mm, nom, a, jv; };
+  BlockSnap prev_blocks[BLOCK_BUFFER_SIZE] = {};
+  uint8_t prev_block_count = 0;
+  uint8_t prev_left_end = 0;
+  uint8_t prev_right_end = 0;
+  float prev_left_entry_speed = 0;
 };
