@@ -366,14 +366,21 @@ class ConstantJerkBlockPlanner {
       // Junction = min of what left can provide, what right can accept, and nominals.
       float v_junction_candidate = _MIN(max_left_exit, max_right_entry, left_nominal, right_nominal);
 
+      // TODO: keep cache of max junction as long as left stays the same
+      const float max_left_entry_from_candidate = maxReachableSpeed(v_junction_candidate, left_mm, left_nominal, left_a, jerk_max);
+      bool valid_junction = left_entry_speed <= max_left_entry_from_candidate;
+
       // Validate right interior junctions:
       //   peakSpeed(v_junction, exit, right) ≤ min(vmax_junction[left_end+1..right_end))
       // Range [left_end+1, right_end) covers all interior block entries in right superblock.
       if (right_len > 1) {
-        float right_v_peak = peakSpeed(max_safe_entry[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal);
-        float right_min_internal_jv = minVal(vmax_junction, left_end + 1, right_end);
+        if (valid_junction) {
+          float right_v_peak = peakSpeed(max_safe_entry[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal);
+          float right_min_internal_jv = minVal(vmax_junction, left_end + 1, right_end);
+          valid_junction = right_v_peak <= right_min_internal_jv;
+        }
 
-        if (right_v_peak > right_min_internal_jv) {
+        if (!valid_junction) {
           right_end = left_end + right_len / 2;  // split right, retry
           continue;
         }
@@ -382,10 +389,13 @@ class ConstantJerkBlockPlanner {
       // Validate left interior junctions:
       //   peakSpeed(left_entry, v_junction, left) ≤ min(vmax_junction[1..left_end))
       if (left_end > 1) {
-        float left_v_peak = peakSpeed(left_entry_speed, v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
-        float left_min_jv = cum_vmax_junction[left_end - 1];
+        if (valid_junction) {
+          float left_v_peak = peakSpeed(left_entry_speed, v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
+          float left_min_jv = cum_vmax_junction[left_end - 1];
+          valid_junction = left_v_peak <= left_min_jv;
+        }
 
-        if (left_v_peak > left_min_jv) {
+        if (!valid_junction){
           // Split left, but not below min_left_size — guarantee (1)
           if (left_end == min_left_size) {
             if (right_len > 1) {
