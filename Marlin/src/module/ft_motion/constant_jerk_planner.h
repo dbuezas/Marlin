@@ -336,6 +336,11 @@ class ConstantJerkBlockPlanner {
     while (true) {
       right_len = right_end - left_end;
 
+      // Left superblock [0..left_end): forward pass as single block
+      float left_mm = cum_mm[left_end - 1];
+      float left_a = cum_min_a[left_end - 1];
+      float left_nominal = nominal[0];
+      float max_left_exit = 0;
       // Right superblock [left_end..right_end) parameters.
       // Only valid when right_len > 0; guarded to avoid out-of-bounds reads.
       float right_mm = 0;
@@ -350,16 +355,11 @@ class ConstantJerkBlockPlanner {
         // decelerate to max_safe_entry[right_end] over right_mm.
         // Conservative: uses min(accel) so any per-block pass would allow ≥ this.
         max_right_entry = maxReachableSpeed(max_safe_entry[right_end], right_mm, _MIN(right_nominal, vmax_junction[left_end]), right_a, jerk_max);
+
+        // max_left_exit: max speed left superblock can reach from left_entry_speed.
+        // Capped by junction ceiling at left_end (entry of right/next group).
+        max_left_exit = maxReachableSpeed(left_entry_speed, left_mm, _MIN(left_nominal, vmax_junction[left_end]), left_a, jerk_max);
       }
-
-      // Left superblock [0..left_end): forward pass as single block
-      float left_mm = cum_mm[left_end - 1];
-      float left_a = cum_min_a[left_end - 1];
-      float left_nominal = nominal[0];
-
-      // max_left_exit: max speed left superblock can reach from left_entry_speed.
-      // Capped by junction ceiling at left_end (entry of right/next group).
-      float max_left_exit = maxReachableSpeed(left_entry_speed, left_mm, _MIN(left_nominal, vmax_junction[left_end]), left_a, jerk_max);
 
       // Junction = min of what left can provide, what right can accept.
       float v_junction_candidate = _MIN(max_left_exit, max_right_entry);
@@ -483,13 +483,11 @@ class ConstantJerkBlockPlanner {
    */
   float maxReachableSpeed(float v_from, float total_mm,
                           float v_max, float a_max_val, float j_max_val) {
-    if (v_max == 0.0f) return 0;
-
     float v_trap = SQRT(v_from * v_from + 2.0f * a_max_val * total_mm);
     float hi = _MIN(v_max, v_trap);
     float lo = v_from;
 
-    if (hi <= lo) return lo;
+    if (hi <= lo) return hi;
 
     float pa, pb, pc;
     float s = cj_planRamp(v_from, hi, j_max_val, a_max_val, false, pa, pb, pc);
