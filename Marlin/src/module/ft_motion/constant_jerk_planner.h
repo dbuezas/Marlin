@@ -151,7 +151,7 @@
  *
  *   Stored between cycles:
  *     min_left_size  = len(old right)      — guarantee (1)
- *     max_safe_exit  = max_safe_entry[R]   — guarantee (2)
+ *     min_safe_exit  = max_safe_entry[R]   — guarantee (2)
  *
  *   Let V_j = junction speed chosen in previous cycle,
  *       V_e = max_safe_entry[R] from previous cycle.
@@ -176,7 +176,7 @@
  *       in exit speed, a higher exit could raise the peak above the
  *       interior junction limits. When splitting can't resolve this
  *       (left_end == min_left_size, right_len == 1), we fall back to
- *       max_safe_exit (= V_e), which reproduces the same peak as the
+ *       min_safe_exit (= V_e), which reproduces the same peak as the
  *       previous cycle (same entry, exit, accel, and distance).
  */
 
@@ -229,7 +229,7 @@ class ConstantJerkBlockPlanner {
   void reset() {
     orig_block_index = 0;
     min_left_size = 1;
-    max_safe_exit = 0;
+    min_safe_exit = 0;
     traj.reset();
   }
 
@@ -280,8 +280,7 @@ class ConstantJerkBlockPlanner {
     float max_safe_entry[BLOCK_BUFFER_SIZE + 1];
     max_safe_entry[block_count] = 0.0f;
     for (int8_t i = block_count - 1; i > 0; i--) {
-      float v_reachable = maxReachableSpeed(max_safe_entry[i + 1], mm[i], nominal[i], accel[i], jerk_max);
-      max_safe_entry[i] = _MIN(v_reachable, vmax_junction[i]);
+      max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], jerk_max);
     }
     float left_entry_speed = traj.getExitSpeed();
 
@@ -336,21 +335,21 @@ class ConstantJerkBlockPlanner {
 
     while (true) {
       right_len = right_end - left_end;
-      const bool have_right = left_end < block_count;
 
       // Right superblock [left_end..right_end) parameters.
-      // Only valid when have_right; guarded to avoid out-of-bounds reads.
-      const float right_mm = have_right ? sumDist(mm, left_end, right_end) : 0;
-      const float right_a = have_right ? minVal(accel, left_end, right_end) : 0;
-      const float right_nominal = have_right ? nominal[left_end] : 0;
-
-      // max_right_entry: max speed right superblock can accept and still
-      // decelerate to max_safe_entry[right_end] over right_mm.
-      // Conservative: uses min(accel) so any per-block pass would allow ≥ this.
+      // Only valid when right_len > 0; guarded to avoid out-of-bounds reads.
+      float right_mm = 0;
+      float right_a = 0;
+      float right_nominal = 0;
       float max_right_entry = 0;
-      if (have_right) {
-        const float v_reach = maxReachableSpeed(max_safe_entry[right_end], right_mm, right_nominal, right_a, jerk_max);
-        max_right_entry = _MIN(v_reach, vmax_junction[left_end], right_nominal);
+      if (right_len > 0) {
+        right_mm = sumDist(mm, left_end, right_end);
+        right_a = minVal(accel, left_end, right_end);
+        right_nominal = nominal[left_end];
+        // max_right_entry: max speed right superblock can accept and still
+        // decelerate to max_safe_entry[right_end] over right_mm.
+        // Conservative: uses min(accel) so any per-block pass would allow ≥ this.
+        max_right_entry = maxReachableSpeed(max_safe_entry[right_end], right_mm, _MIN(right_nominal, vmax_junction[left_end]), right_a, jerk_max);
       }
 
       // Left superblock [0..left_end): forward pass as single block
@@ -360,11 +359,8 @@ class ConstantJerkBlockPlanner {
 
       // max_left_exit: max speed left superblock can reach from left_entry_speed.
       // Capped by junction ceiling at left_end (entry of right/next group).
-      float max_left_exit = 0;
-      if (have_right) {
-        const float v_reach = maxReachableSpeed(left_entry_speed, left_mm, left_nominal, left_a, jerk_max);
-        max_left_exit = _MIN(v_reach, vmax_junction[left_end], left_nominal);
-      }
+      float max_left_exit = maxReachableSpeed(left_entry_speed, left_mm, _MIN(left_nominal, vmax_junction[left_end]), left_a, jerk_max);
+
       // Junction = min of what left can provide, what right can accept.
       float v_junction_candidate = _MIN(max_left_exit, max_right_entry);
 
@@ -373,7 +369,7 @@ class ConstantJerkBlockPlanner {
       // Only relevant when there IS a right group — without one, exit is 0
       // (stop at buffer end) which plan_full handles via its own ramp planning.
       bool valid_junction = true;
-      if (have_right) {
+      if (right_len > 0) {
         const float min_left_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
         valid_junction = min_left_exit <= v_junction_candidate;
       }
@@ -382,6 +378,7 @@ class ConstantJerkBlockPlanner {
       // Validate right interior junctions:
       //   peakSpeed(v_junction, exit, right) ≤ min(vmax_junction[left_end+1..right_end))
       // Range [left_end+1, right_end) covers all interior block entries in right superblock.
+      // Note the s-cruve may still reach junctions at-than-peak speed, this is a conservative test.
       if (right_len > 1) {
         if (valid_junction) {
           float right_v_peak = peakSpeed(max_safe_entry[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal);
@@ -397,7 +394,7 @@ class ConstantJerkBlockPlanner {
 
       // Validate left interior junctions:
       //   peakSpeed(left_entry, v_junction, left) ≤ min(vmax_junction[1..left_end))
-      if (left_end > 1 && valid_junction) {
+      if (valid_junction && left_end > 1) {
         float left_v_peak = peakSpeed(left_entry_speed, v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
         float left_min_jv = minVal(vmax_junction, 1, left_end);
         valid_junction = left_v_peak <= left_min_jv;
@@ -414,14 +411,14 @@ class ConstantJerkBlockPlanner {
           left_end = _MAX(left_end / 2, min_left_size);
           continue;
         }
-        // Can't split either side. Fall back to max_safe_exit — guarantee (2):
-        // previous cycle validated peak(V_j, max_safe_exit) ≤ interior junctions
-        // for these same blocks, so max_safe_exit is known-safe.
+        // Can't split either side. Fall back to min_safe_exit — guarantee (2):
+        // previous cycle validated peak(V_j, min_safe_exit) ≤ interior junctions
+        // for these same blocks, so min_safe_exit is known-safe.
 
-        // left_len <= min_left_size && right_len <= 1
-        left_exit_speed = max_safe_exit;
+        // left_len == min_left_size && right_len < 2
+        left_exit_speed = min_safe_exit;
         min_left_size = 1;
-        max_safe_exit = have_right ? minReachableSpeed(left_exit_speed, right_mm, right_a, jerk_max) : 0;
+        min_safe_exit = right_len == 0 ? 0: minReachableSpeed(left_exit_speed, right_mm, right_a, jerk_max);
         break;
 
       }
@@ -430,25 +427,15 @@ class ConstantJerkBlockPlanner {
 
       // Store right group state for next cycle's cross-cycle guarantees:
       //   min_left_size = right_len        → (1) preserves decel feasibility distance
-      //   max_safe_exit = safe_entry[R]    → (2) known-valid exit for fallback
+      //   min_safe_exit = safe_entry[R]    → (2) known-valid exit for fallback
       min_left_size = right_len;
-      max_safe_exit = max_safe_entry[right_end];
+      min_safe_exit = max_safe_entry[right_end];
       break;
     }
 
 
     // --- 5. Plan trajectory ---
     traj.plan_full(left_entry_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
-
-    // Save snapshot for diagnostics on next cycle's failure
-    prev_block_count = block_count;
-    prev_left_end = left_end;
-    prev_right_end = right_end;
-    prev_left_entry_speed = left_entry_speed;
-    for (uint8_t i = 0; i < block_count; i++) {
-      prev_blocks[i] = { mm[i], nominal[i], accel[i], vmax_junction[i] };
-    }
-
 
     // Set up execution tracking
     orig_block_index = 0;
@@ -492,13 +479,14 @@ class ConstantJerkBlockPlanner {
   /**
    * Max speed reachable from v_from over total_mm via jerk-limited ramp.
    * Monotone in v_from and total_mm: more of either → higher result.
+   * TODO: i am not sure it is monotone from v_from: starting faster gives less time to ramp up accel
    */
   float maxReachableSpeed(float v_from, float total_mm,
-                          float nominal, float a_max_val, float j_max_val) {
-    if (total_mm <= 0.0f) return v_from;
+                          float v_max, float a_max_val, float j_max_val) {
+    if (v_max == 0.0f) return 0;
 
     float v_trap = SQRT(v_from * v_from + 2.0f * a_max_val * total_mm);
-    float hi = _MIN(nominal, v_trap);
+    float hi = _MIN(v_max, v_trap);
     float lo = v_from;
 
     if (hi <= lo) return lo;
@@ -524,17 +512,9 @@ class ConstantJerkBlockPlanner {
   uint8_t group_block_count = 0;
   uint8_t group_buffer_consumed = 0;
   uint8_t min_left_size = 1;  // (1): previous right group size — floor for left splitting
-  float max_safe_exit = 0; // (2): previous right group exit — known-valid fallback
+  float min_safe_exit = 0; // (2): previous right group exit — known-valid fallback
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
-
-  // Previous cycle snapshot for diagnostics
-  struct BlockSnap { float mm, nom, a, jv; };
-  BlockSnap prev_blocks[BLOCK_BUFFER_SIZE] = {};
-  uint8_t prev_block_count = 0;
-  uint8_t prev_left_end = 0;
-  uint8_t prev_right_end = 0;
-  float prev_left_entry_speed = 0;
 
   /**
    * Min speed reachable by decelerating from v_from over total_mm.
