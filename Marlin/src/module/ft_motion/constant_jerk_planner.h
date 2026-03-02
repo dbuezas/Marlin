@@ -66,11 +66,9 @@
  *     Monotone in v_from: higher start → higher or equal v_to.
  *     Monotone in a_max: higher accel limit → higher or equal v_to.
  *
- *   peakSpeed(v_entry, v_exit, a_max, j_max, dist, nominal) → v_peak:
- *     The peak velocity of an S-curve with given boundary speeds over dist.
- *     Monotone in v_entry and v_exit: raising either raises v_peak.
- *     Monotone in dist: more distance → higher or equal v_peak.
- *     Monotone in a_max: higher accel limit → higher or equal v_peak.
+ *   peakExceedsCeiling(v_entry, v_exit, a_max, j_max, dist, ceiling) → bool:
+ *     Whether the S-curve peak velocity over dist exceeds ceiling.
+ *     O(1): checks if ramp distance to ceiling fits in dist.
  *
  *   cj_planRamp(v_start, v_peak, j, a_max, decel, ...) → ramp_dist:
  *     Distance consumed by a 3-phase ramp between v_start and v_peak.
@@ -135,9 +133,9 @@
  *
  *   Validation: the S-curve peak within each superblock must not exceed
  *   any interior junction ceiling. For right=[L..R):
- *     peakSpeed(v_junction, max_safe_entry[R], ...) ≤ min(vmax_junction[L+1..R))
+ *     !peakExceedsCeiling(v_junction, max_safe_entry[R], ..., min(vmax_junction[L+1..R)))
  *   For left=[0..L):
- *     peakSpeed(left_entry, v_junction, ...) ≤ min(vmax_junction[1..L))
+ *     !peakExceedsCeiling(left_entry, v_junction, ..., min(vmax_junction[1..L)))
  *
  *   On failure, binary-split the offending group and retry
  *    - If both sides violate internal junctions, it's preferred to split the right
@@ -167,13 +165,12 @@
  *       preserving the distance over which V_j was validated.
  *
  *   (2) Interior junction feasibility: previous cycle validated
- *       peakSpeed(V_j, V_e, right_a, ...) ≤ min interior vmax_junction
+ *       !peakExceedsCeiling(V_j, V_e, right_a, ..., min interior vmax_junction)
  *       where right_a = min(accel) of the right group.
  *       The new left group uses cum_min_a = min(accel) of those same blocks,
  *       so cum_min_a == right_a exactly.
  *       In the current cycle, the new right group may be longer, so
- *       max_right_entry may exceed V_e. Since peakSpeed is monotone
- *       in exit speed, a higher exit could raise the peak above the
+ *       max_right_entry may exceed V_e. A higher exit could raise the peak above the
  *       interior junction limits. When splitting can't resolve this
  *       (left_end == min_left_size, right_len == 1), we fall back to
  *       min_safe_exit (= V_e), which reproduces the same peak as the
@@ -181,32 +178,19 @@
  */
 
 /**
- * Compute the peak velocity of an S-curve over dist with given boundary speeds.
- * Monotone in v_entry, v_exit, and dist: raising any of them raises v_peak.
+ * Check whether the S-curve peak velocity over dist exceeds ceiling.
+ * O(1): if the ramp distance to reach ceiling fits in dist, the peak exceeds it.
+ * The peak is capped by v_nominal (cruise speed), so if ceiling >= v_nominal
+ * the peak can never exceed the ceiling.
  */
-static float peakSpeed(float v_entry, float v_exit, float a_max_val,
-                        float j_max_val, float dist, float v_nominal) {
+static bool peakExceedsCeiling(float v_entry, float v_exit, float a_max_val,
+                                float j_max_val, float dist, float v_nominal,
+                                float ceiling) {
+  if (ceiling >= v_nominal) return false;
   const float v_small = _MIN(v_entry, v_exit);
   const float v_large = _MAX(v_entry, v_exit);
-  float v_peak = _MAX(v_large, v_nominal);
-  float s_ramps = cj_totalRampDist(v_peak, v_small, v_large, j_max_val, a_max_val);
-
-  if (s_ramps > dist) {
-    float v_hi = v_peak, v_lo = v_large;
-    if (cj_totalRampDist(v_lo, v_small, v_large, j_max_val, a_max_val) > dist)
-      return v_lo;
-    for (int i = 0; i < 16; i++) {
-      float mid = 0.5f * (v_lo + v_hi);
-      float s = cj_totalRampDist(mid, v_small, v_large, j_max_val, a_max_val);
-      if (s > dist)
-        v_hi = mid;
-      else
-        v_lo = mid;
-      if (v_hi - v_lo < 0.001f) break;
-    }
-    v_peak = v_lo;
-  }
-  return v_peak;
+  if (ceiling < v_large) return true;
+  return cj_totalRampDist(ceiling, v_small, v_large, j_max_val, a_max_val) < dist;
 }
 
 static float sumDist(const float* mm_arr,  uint8_t from, uint8_t to) {
@@ -375,15 +359,12 @@ class ConstantJerkBlockPlanner {
       }
 
 
-      // Validate right interior junctions:
-      //   peakSpeed(v_junction, exit, right) ≤ min(vmax_junction[left_end+1..right_end))
-      // Range [left_end+1, right_end) covers all interior block entries in right superblock.
-      // Note the s-cruve may still reach junctions at-than-peak speed, this is a conservative test.
+      // Validate right interior junctions: peak within right superblock
+      // must not exceed any interior junction ceiling.
       if (right_len > 1) {
         if (valid_junction) {
-          float right_v_peak = peakSpeed(max_safe_entry[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal);
-          float right_min_internal_jv = minVal(vmax_junction, left_end + 1, right_end);
-          valid_junction = right_v_peak <= right_min_internal_jv;
+          float right_min_jv = minVal(vmax_junction, left_end + 1, right_end);
+          valid_junction = !peakExceedsCeiling(max_safe_entry[right_end], v_junction_candidate, right_a, jerk_max, right_mm, right_nominal, right_min_jv);
         }
 
         if (!valid_junction) {
@@ -392,12 +373,11 @@ class ConstantJerkBlockPlanner {
         }
       }
 
-      // Validate left interior junctions:
-      //   peakSpeed(left_entry, v_junction, left) ≤ min(vmax_junction[1..left_end))
+      // Validate left interior junctions: peak within left superblock
+      // must not exceed any interior junction ceiling.
       if (valid_junction && left_end > 1) {
-        float left_v_peak = peakSpeed(left_entry_speed, v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
         float left_min_jv = minVal(vmax_junction, 1, left_end);
-        valid_junction = left_v_peak <= left_min_jv;
+        valid_junction = !peakExceedsCeiling(left_entry_speed, v_junction_candidate, left_a, jerk_max, left_mm, left_nominal, left_min_jv);
       }
 
       if (!valid_junction) {
