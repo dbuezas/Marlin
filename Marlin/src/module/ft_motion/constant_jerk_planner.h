@@ -392,7 +392,7 @@ class ConstantJerkBlockPlanner {
 
       // Validate left interior junctions:
       //   peakSpeed(left_entry, v_junction, left) ≤ min(vmax_junction[1..left_end))
-      if (valid_junction) {
+      if (left_end > 1 && valid_junction) {
         float left_v_peak = peakSpeed(left_entry_speed, v_junction_candidate, left_a, jerk_max, left_mm, left_nominal);
         float left_min_jv = minVal(vmax_junction, 1, left_end);
         valid_junction = left_v_peak <= left_min_jv;
