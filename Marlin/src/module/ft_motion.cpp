@@ -390,7 +390,7 @@ bool FTMotion::plan_next_block() {
 
     // There was never a block? Run out the plan and bail.
     if (!current_block) {
-      // currentGenerator->planRunout(0);
+      currentGenerator->planRunout(0);
       return false;
     }
 

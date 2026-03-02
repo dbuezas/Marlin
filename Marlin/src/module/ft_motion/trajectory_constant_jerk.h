@@ -217,7 +217,6 @@ public:
       phase_start_a[i] = 0.0f;
     }
     total_duration = 0.0f;
-    SERIAL_ECHOLNPGM("CJ ERROR: reset trajectory");
 
   }
 

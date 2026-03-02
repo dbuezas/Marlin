@@ -370,8 +370,13 @@ class ConstantJerkBlockPlanner {
 
       // min_left_exit: minimum speed the left can decelerate to from left_entry_speed.
       // If this exceeds v_junction_candidate, the left can't slow down enough.
-      const float min_left_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
-      bool valid_junction = min_left_exit <= v_junction_candidate;
+      // Only relevant when there IS a right group — without one, exit is 0
+      // (stop at buffer end) which plan_full handles via its own ramp planning.
+      bool valid_junction = true;
+      if (have_right) {
+        const float min_left_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
+        valid_junction = min_left_exit <= v_junction_candidate;
+      }
 
 
       // Validate right interior junctions:
