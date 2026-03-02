@@ -202,7 +202,7 @@ static float peakSpeed(float v_entry, float v_exit, float a_max_val,
         v_hi = mid;
       else
         v_lo = mid;
-      if (v_hi - v_lo < 0.01f) break;
+      if (v_hi - v_lo < 0.001f) break;
     }
     v_peak = v_lo;
   }
@@ -433,20 +433,7 @@ class ConstantJerkBlockPlanner {
 
 
     // --- 5. Plan trajectory ---
-    const bool feasible = traj.plan_full(left_entry_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
-    if (!feasible) {
-      SERIAL_ECHOLNPGM("CJ DIAG: left_end:", left_end, " right_end:", right_end,
-        " min_left_size:", min_left_size, " max_safe_exit:", max_safe_exit);
-      for (uint8_t i = 0; i < block_count; i++)
-        SERIAL_ECHOLNPGM("CJ DIAG: block ", i,
-          " mm:", mm[i], " nom:", nominal[i], " a:", accel[i], " jv:", vmax_junction[i]);
-      SERIAL_ECHOLNPGM("CJ DIAG prev: left_end:", prev_left_end,
-        " right_end:", prev_right_end, " entry:", prev_left_entry_speed);
-      for (uint8_t i = 0; i < prev_block_count; i++)
-        SERIAL_ECHOLNPGM("CJ DIAG prev block ", i,
-          " mm:", prev_blocks[i].mm, " nom:", prev_blocks[i].nom,
-          " a:", prev_blocks[i].a, " jv:", prev_blocks[i].jv);
-    }
+    traj.plan_full(left_entry_speed, left_exit_speed, cum_min_a[left_end - 1], jerk_max, cum_mm[left_end - 1], nominal[0]);
 
     // Save snapshot for diagnostics on next cycle's failure
     prev_block_count = block_count;
@@ -522,7 +509,7 @@ class ConstantJerkBlockPlanner {
         lo = mid;
       else
         hi = mid;
-      if (hi - lo < 0.01f) break;
+      if (hi - lo < 0.001f) break;
     }
     return lo;
   }
@@ -566,7 +553,7 @@ class ConstantJerkBlockPlanner {
         hi = mid;
       else
         lo = mid;
-      if (hi - lo < 0.01f) break;
+      if (hi - lo < 0.001f) break;
     }
     return hi;
   }

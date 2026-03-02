@@ -93,7 +93,7 @@ public:
   // Plan with explicit jerk and a_max (used by the block merging planner).
   // Jerk comes from cfg.jerk_max, passed through by the caller.
   // Returns false if infeasible (ramp between v0 and v1 exceeds distance).
-  bool plan_full(float initial_speed_in, float final_speed_in,
+  void plan_full(float initial_speed_in, float final_speed_in,
                  float accel_max_in, float jerk_in,
                  float distance_in, float v_nominal_in) {
     // reset();
@@ -107,7 +107,6 @@ public:
     const float v_small = _MIN(v0, v1);
     const float v_large = _MAX(v0, v1);
 
-    bool feasible = true;
     float min_dist_at_nominal = cj_totalRampDist(v_nominal_in, v_small, v_large, j, a_max);
     float v_peak = v_nominal_in;
     if (min_dist_at_nominal > distance) {
@@ -117,8 +116,7 @@ public:
       float minmimum_distance = cj_totalRampDist(v_large, v_small, v_large, j, a_max);
       if (minmimum_distance > distance) {
         // Ramp between v0 and v1 exceeds distance.
-        // Position won't be continuous, this should never happen
-        feasible = false;
+        // Position won't be continuous, this can happen due to numerical errors
         SERIAL_ECHOLNPGM("CJ ERROR: infeasible target:", distance,
           " minmimum_distance:", minmimum_distance,
           " v0:", v0,
@@ -126,7 +124,10 @@ public:
           " j:", j,
           " a_max:", a_max
         );
-      } else if (distance - minmimum_distance > 0.01f) {
+        plan_full(initial_speed_in, final_speed_in, accel_max_in, jerk_in * 1.1, distance_in, v_nominal_in);
+        return;
+
+      } else if (distance - minmimum_distance > 0.001f) {
         for (int i = 0; i < 48; i++) {
           float v_mid = 0.5f * (v_peak_min + v_peak_max);
           float s_mid = cj_totalRampDist(v_mid, v_small, v_large, j, a_max);
@@ -135,8 +136,8 @@ public:
             v_peak_max = v_mid;
           } else {
             v_peak_min = v_mid;
-            if (-overshoot <= 0.01f) {
-              // Undershoot peak and cruise for 0.01mm instead of wasting cpu
+            if (-overshoot <= 0.001f) {
+              // Undershoot peak and cruise for 0.001mm instead of wasting cpu
               break;
             }
           }
@@ -159,7 +160,6 @@ public:
 
     total_duration = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     buildPhaseCache();
-    return feasible;
   }
 
   void planRunout(const float duration) override {
