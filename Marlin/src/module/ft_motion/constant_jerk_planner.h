@@ -262,6 +262,10 @@ class ConstantJerkBlockPlanner {
       max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], jerk_max);
     }
     float left_entry_speed = traj.getExitSpeed();
+    if (left_entry_speed == 0) {
+      min_left_size = 1; // TODO: do this more cleanly (if trajectory was reset, min_left_size should be reset too)
+      min_safe_exit = 0;
+    }
 
     // Left-compatible group: cumulative superblock parameters for [0..i+1).
     //   cum_mm[i]             = sum(mm[0..i+1))            — superblock distance
