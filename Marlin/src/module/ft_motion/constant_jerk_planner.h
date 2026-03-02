@@ -34,12 +34,12 @@
  * change, so a different planner is needed.
  *
  * This planner:
- * - Ignores block->entry_speed and block->exit_speed entirely
- * - Uses block->vmax_junction as junction speed ceiling (geometric, valid)
- * - Runs its own jerk-aware reverse pass on all visible blocks enforcing
- *   zero acceleration at junctions
- * - Merges compatible consecutive blocks into a single S-curve to relax
- *   the zero-acceleration-at-junctions limitation
+ * - Ignores Marlin's trapezoidal entry/exit speeds entirely
+ * - Uses block->vmax_junction as the junction speed ceiling (geometric limit,
+ *   never overwritten by the trapezoidal recalculate pass)
+ * - Runs its own jerk-aware backward pass on all visible blocks
+ * - Merges compatible consecutive blocks into a single S-curve, relaxing
+ *   the zero-acceleration-at-junctions constraint
  *
  * ─── Notation ───
  *
@@ -49,139 +49,134 @@
  *     nominal[i]        max cruise speed (mm/s)
  *     vmax_junction[i]  geometric junction speed ceiling at entry of block i
  *
- *   A "superblock" [a..b) treats blocks a..b-1 as one segment with:
+ *   A "superblock" [a..b) treats blocks a..b-1 as one merged segment:
  *     distance  = sum(mm[a..b))
  *     accel     = min(accel[a..b))        (conservative)
  *     nominal   = nominal[a]              (all blocks in group share this)
  *
- *   The merge compatibility check ensures max(accel)/min(accel) ≤ CJP_MERGE_AMAX_RATIO
- *   (1.1). Using min(accel) is conservative: the superblock allows less speed
- *   than per-block pass would, so superblock-feasible ⇒ per-block feasible.
+ *   Merge compatibility: max(accel)/min(accel) ≤ CJP_MERGE_AMAX_RATIO (1.1).
+ *   Using min(accel) is conservative: the superblock is slower than a
+ *   per-block pass would allow, so superblock-feasible ⇒ per-block feasible.
  *
- * ─── Key functions and their properties ───
+ * ─── Key functions ───
  *
- *   maxReachableSpeed(v_from, dist, nominal, a_max, j_max) → v_to:
- *     The max speed reachable from v_from over dist under jerk/accel limits.
- *     Monotone in dist: more distance → higher or equal v_to.
- *     Monotone in v_from: higher start → higher or equal v_to.
- *     Monotone in a_max: higher accel limit → higher or equal v_to.
+ *   maxReachableSpeed(v_from, total_mm, v_max, a_max, j_max) → float
+ *     Max speed reachable from v_from over total_mm under jerk/accel limits,
+ *     capped by v_max. Binary search over cj_planRamp (32 iterations).
+ *     When v_from > v_max, returns v_max (v_max is a hard ceiling).
+ *     Returns lo (underestimate): actual reachable speed ∈ [lo, lo + 0.001].
  *
- *   peakExceedsCeiling(v_entry, v_exit, a_max, j_max, dist, ceiling) → bool:
- *     Whether the S-curve peak velocity over dist exceeds ceiling.
- *     O(1): checks if ramp distance to ceiling fits in dist.
+ *   minReachableSpeed(v_from, total_mm, a_max, j_max) → float
+ *     Min speed after decelerating from v_from over total_mm.
+ *     Returns 0 if full stop fits; otherwise binary search.
+ *     Returns hi (overestimate): actual min speed ∈ [hi - 0.001, hi].
  *
- *   cj_planRamp(v_start, v_peak, j, a_max, decel, ...) → ramp_dist:
- *     Distance consumed by a 3-phase ramp between v_start and v_peak.
- *     Monotone in (v_peak - v_start): larger speed change → more distance.
- *     Symmetric: accel and decel ramps consume the same distance
- *     (time-reversed velocity profile has equal area).
- *     This means maxReachableSpeed(v_a, dist) ≥ v_b ⟹ decel from v_b
- *     to v_a also fits in dist. Critical for plan_full feasibility.
+ *   peakExceedsCeiling(v_entry, v_exit, a_max, j_max, dist, nominal, ceiling) → bool
+ *     Whether the S-curve peak over dist strictly exceeds ceiling. O(1).
+ *     If ceiling ≥ nominal, returns false (peak is capped by nominal).
+ *     If ceiling < max(v_entry, v_exit), returns true (already above).
+ *     Otherwise checks if ramp distance to ceiling fits in dist.
+ *
+ *   cj_planRamp(v_start, v_peak, j, a_max, decel, ...) → float
+ *     Distance consumed by a 3-phase jerk-limited ramp.
+ *     Monotone in |v_peak - v_start|: larger speed change → more distance.
+ *     Symmetric: accel and decel ramps consume equal distance.
+ *     This symmetry means maxReachableSpeed(v_a, dist) ≥ v_b implies
+ *     decel from v_b to v_a also fits in dist.
  *
  * ─── plan_full feasibility ───
  *
  *   plan_full(v0, v1, a_max, j, dist, nominal) requires:
  *     cj_planRamp(min(v0,v1), max(v0,v1), j, a_max) ≤ dist
- *   i.e. the ramp between the two boundary speeds must fit in dist.
+ *   i.e. the ramp between the two boundary speeds must fit.
  *
- *   The planner must ensure both directions:
- *     maxReachableSpeed(v0, dist, ...) ≥ v1   — accel direction
- *     maxReachableSpeed(v1, dist, ...) ≥ v0   — decel direction (by ramp symmetry)
- *   The accel direction is ensured by forward-pass construction.
- *   The decel direction is checked explicitly: if
- *     maxReachableSpeed(v_junction, left_mm, ...) < left_entry_speed
- *   the junction is infeasible and the groups are split.
+ *   The planner ensures this in both directions:
+ *     Forward: maxReachableSpeed(v0, dist) ≥ v1  (by construction)
+ *     Decel:   minReachableSpeed(v0, dist) ≤ v1  (checked explicitly)
+ *   If decel is infeasible, groups are split until it holds.
+ *   As a last resort, plan_full inflates jerk by 10% recursively.
  *
  * ─── Backward pass ───
  *
  *   max_safe_entry[i] = max speed at which block i can be entered such that
- *   blocks [i..N) can decelerate to a stop by block N, respecting all
- *   junction ceilings, jerk, and accel limits.
+ *   the remaining blocks [i..N) can decelerate to a stop by block N.
  *
  *   Computed right-to-left:
- *     max_safe_entry[N] = 0 (the exit of block N-1)
- *     max_safe_entry[i] = min(
- *                            maxReachableSpeed(max_safe_entry[i+1], mm[i], ...),
- *                            vmax_junction[i]
- *                         )
+ *     max_safe_entry[N] = 0
+ *     max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i+1], mm[i],
+ *                            min(nominal[i], vmax_junction[i]), accel[i], j)
+ *
+ *   The v_max parameter = min(nominal, vmax_junction) folds the junction
+ *   ceiling into the search, so the result never exceeds either limit.
  *
  *   Property (backward-monotone):
  *     max_safe_entry over [i..N) ≤ max_safe_entry over [i..N+k)
- *     Adding blocks to the tail can only raise or maintain the safe entry
- *     speed, because the extra distance provides more room to decelerate.
- *
- * ─── Superblock backward pass ───
- *
- *   For a superblock [a..b) with exit speed v_exit:
- *     max_entry = min(
- *                    maxReachableSpeed(v_exit, sum(mm[a..b)), ...),
- *                    vmax_junction[a]
- *                 )
- *
- *   Both left and right superblocks use min(accel), which is conservative:
- *   per-block backward pass with individual accel[i] ≥ min(accel) would
- *   allow equal or higher speeds. So superblock-feasible ⇒ per-block feasible.
+ *     Adding blocks to the tail only raises safe entry speeds (more room).
  *
  * ─── Merge algorithm ───
  *
- *   The block buffer is partitioned into left=[0..L), right=[L..R), and tail=[R, N):
- *   - Left and right are each superblocks (same nominal, close accel)
- *   - Right superblock's max_entry gives a better exit ceiling for left
- *     than individual block backward pass (more decel distance)
- *   - v_junction = min(max_left_exit, max_right_entry, nominals)
- *   - The tail are the remaining individual blocks.
+ *   The visible buffer is partitioned into:
+ *     left = [0..L),  right = [L..R),  tail = [R..N)
  *
- *   Validation: the S-curve peak within each superblock must not exceed
- *   any interior junction ceiling. For right=[L..R):
- *     !peakExceedsCeiling(v_junction, max_safe_entry[R], ..., min(vmax_junction[L+1..R)))
- *   For left=[0..L):
- *     !peakExceedsCeiling(left_entry, v_junction, ..., min(vmax_junction[1..L)))
+ *   Left and right are superblocks (same nominal, close accel).
+ *   The junction speed between them:
+ *     v_junction = min(max_left_exit, max_right_entry)
+ *   where max_left_exit  = maxReachableSpeed(entry, left_mm, v_max, ...)
+ *         max_right_entry = maxReachableSpeed(safe_entry[R], right_mm, v_max, ...)
+ *   and v_max = min(nominal, vmax_junction[L]) caps at the junction ceiling.
  *
- *   On failure, binary-split the offending group and retry
- *    - If both sides violate internal junctions, it's preferred to split the right
- *      side, which may reduce v_junction and make the left side valid.
- *    - If the left is split, it's second half becomes the new right.
+ *   Decel check: minReachableSpeed(entry, left_mm) must be ≤ v_junction,
+ *   otherwise the left can't slow down enough to reach the junction speed.
+ *
+ *   Interior junction check: the peak velocity within each superblock
+ *   must not exceed any interior junction ceiling:
+ *     !peakExceedsCeiling(entry, exit, a, j, mm, nominal, min_interior_jv)
+ *
+ *   On failure, binary-split the offending group and retry.
+ *   Right is split first (may lower v_junction, fixing the left).
+ *   If left must split, its second half becomes the new right.
  *
  * ─── Cross-cycle guarantees ───
  *
  *   Each cycle emits left=[0..L) and remembers right=[L..R).
- *   Next cycle, the old right blocks are the smallest possible new left group.
+ *   Next cycle, those right blocks become the new (minimum) left group.
  *
  *   Stored between cycles:
- *     min_left_size  = len(old right)      — guarantee (1)
- *     min_safe_exit  = max_safe_entry[R]   — guarantee (2)
+ *     min_left_size  = len(right)           — guarantee (1)
+ *     min_safe_exit  = max_safe_entry[R]    — guarantee (2)
  *
  *   Let V_j = junction speed chosen in previous cycle,
  *       V_e = max_safe_entry[R] from previous cycle.
  *
- *   (1) Decel feasibility: left_entry_speed = V_j (previous exit).
- *       The previous right superblock [L..R) could decelerate from V_j
- *       to V_e over sum(mm[L..R)) with min(accel[L..R)).
- *       Now those same blocks are the left group, also using min(accel)
- *       over the same blocks — identical parameters.
- *       The tail beyond is the same or longer (new blocks may arrive),
- *       so by backward-monotone, max_safe_entry[R] ≥ V_e.
- *       min_left_size prevents splitting left below len(old right),
+ *   (1) Decel feasibility: the previous right group could decelerate from
+ *       V_j to V_e over its total distance with min(accel). Now those same
+ *       blocks are the left group with the same min(accel) and distance.
+ *       By backward-monotone, new max_safe_entry[R] ≥ V_e (tail grew).
+ *       min_left_size prevents splitting below the previous right size,
  *       preserving the distance over which V_j was validated.
  *
- *   (2) Interior junction feasibility: previous cycle validated
- *       !peakExceedsCeiling(V_j, V_e, right_a, ..., min interior vmax_junction)
- *       where right_a = min(accel) of the right group.
- *       The new left group uses cum_min_a = min(accel) of those same blocks,
- *       so cum_min_a == right_a exactly.
- *       In the current cycle, the new right group may be longer, so
- *       max_right_entry may exceed V_e. A higher exit could raise the peak above the
- *       interior junction limits. When splitting can't resolve this
- *       (left_end == min_left_size, right_len == 1), we fall back to
- *       min_safe_exit (= V_e), which reproduces the same peak as the
- *       previous cycle (same entry, exit, accel, and distance).
+ *   (2) Interior junction feasibility: previous cycle validated that the
+ *       peak over the right group (with entry=V_j, exit=V_e) did not
+ *       exceed any interior junction. The new left has the same blocks,
+ *       same min(accel), same entry (V_j). But the new right group may
+ *       be longer, raising max_right_entry above V_e. A higher exit
+ *       raises the peak, potentially exceeding interior junctions.
+ *       When splitting can't resolve this (left_end == min_left_size,
+ *       right_len ≤ 1), we fall back to min_safe_exit (= V_e), which
+ *       reproduces the previous cycle's peak (same entry, exit, accel,
+ *       distance). This is safe because V_e was the speed at which the
+ *       previous cycle proved we could decelerate to a stop by the end
+ *       of the tail. Since the tail only grew (backward-monotone), we
+ *       can still stop if needed. In practice the left group advances
+ *       each cycle and connects to the new blocks before that happens.
  */
 
 /**
- * Check whether the S-curve peak velocity over dist exceeds ceiling.
- * O(1): if the ramp distance to reach ceiling fits in dist, the peak exceeds it.
- * The peak is capped by v_nominal (cruise speed), so if ceiling >= v_nominal
- * the peak can never exceed the ceiling.
+ * Does the S-curve peak velocity over dist strictly exceed ceiling?
+ * O(1): a single cj_totalRampDist call replaces a binary search.
+ * - ceiling ≥ v_nominal → false (peak capped by cruise speed)
+ * - ceiling < max(v_entry, v_exit) → true (boundary already exceeds)
+ * - otherwise: true iff ramp to ceiling fits in dist (peak goes higher)
  */
 static bool peakExceedsCeiling(float v_entry, float v_exit, float a_max_val,
                                 float j_max_val, float dist, float v_nominal,
@@ -457,9 +452,10 @@ class ConstantJerkBlockPlanner {
 
  private:
   /**
-   * Max speed reachable from v_from over total_mm via jerk-limited ramp.
-   * Monotone in v_from and total_mm: more of either → higher result.
-   * TODO: i am not sure it is monotone from v_from: starting faster gives less time to ramp up accel
+   * Max speed reachable from v_from over total_mm via jerk-limited ramp,
+   * capped by v_max. Returns lo (underestimate within 0.001 mm/s).
+   * When v_from > v_max, returns v_max (hard ceiling).
+   * Monotone in total_mm: more distance → higher or equal result.
    */
   float maxReachableSpeed(float v_from, float total_mm,
                           float v_max, float a_max_val, float j_max_val) {
