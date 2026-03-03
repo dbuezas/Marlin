@@ -82,6 +82,31 @@ static inline float cj_totalRampDist(float vp, float v_small, float v_large,
   return s1 + s2;
 }
 
+// Closed-form ramp distance (O(1), no simulation).
+// Equivalent to cj_planRamp but without computing phase durations.
+//   Triangular (j*dv ≤ a_max²):  s = (v_s + v_p) * sqrt(dv / j)
+//   Trapezoidal (j*dv > a_max²): s = (v_s + v_p) / 2 * (a_m/j + dv/a_m)
+static inline float cj_rampDist(float v_start, float v_peak, float j, float a_max) {
+  const float dv = v_peak - v_start;
+  if (dv <= 0.0f) return 0.0f;
+  if (j * dv <= a_max * a_max)
+    return (v_start + v_peak) * SQRT(dv / j);
+  else
+    return (v_start + v_peak) * 0.5f * (a_max / j + dv / a_max);
+}
+
+// ds/d(v_peak) of cj_rampDist (v_start fixed, v_peak varies).
+//   Triangular:  (3*v_p - v_s) / (2*sqrt(j*dv))
+//   Trapezoidal: 0.5*(a_m/j + 2*v_p/a_m)
+static inline float cj_rampDistDeriv(float v_start, float v_peak, float j, float a_max) {
+  const float dv = v_peak - v_start;
+  if (dv <= 0.0f) return 0.0f;
+  if (j * dv <= a_max * a_max)
+    return (3.0f * v_peak - v_start) / (2.0f * SQRT(j * dv));
+  else
+    return 0.5f * (a_max / j + 2.0f * v_peak / a_max);
+}
+
 class ConstantJerkTrajectoryGenerator : public TrajectoryGenerator {
 public:
   ConstantJerkTrajectoryGenerator() = default;

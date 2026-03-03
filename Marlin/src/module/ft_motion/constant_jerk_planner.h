@@ -62,13 +62,12 @@
  *
  *   maxReachableSpeed(v_from, total_mm, v_max, a_max, j_max) → float
  *     Max speed reachable from v_from over total_mm under jerk/accel limits,
- *     capped by v_max. Binary search over cj_planRamp (32 iterations, exits early with a tolerance).
+ *     capped by v_max. Newton's method on closed-form cj_rampDist (~4 iterations).
  *     When v_from > v_max, returns v_max (v_max is a hard ceiling).
- *     Returns lo (slight underestimate): actual reachable speed ∈ [lo, lo + 0.001].
  *
  *   minReachableSpeed(v_from, total_mm, a_max, j_max) → float
  *     Min speed after decelerating from v_from over total_mm.
- *     Returns 0 if full stop fits; otherwise binary search.
+ *     Returns 0 if full stop fits; otherwise binary search on cj_rampDist.
  *     Returns hi (slight overestimate): actual min speed ∈ [hi - 0.001, hi].
  *
  *   peakExceedsCeiling(v_entry, v_exit, a_max, j_max, dist, nominal, ceiling) → bool
@@ -77,12 +76,15 @@
  *     If ceiling < max(v_entry, v_exit), returns true (already above).
  *     Otherwise checks if ramp distance to ceiling fits in dist.
  *
- *   cj_planRamp(v_start, v_peak, j, a_max, decel, ...) → float
- *     Distance consumed by a 3-phase jerk-limited ramp.
- *     Monotone in |v_peak - v_start|: larger speed change → more distance.
+ *   cj_rampDist(v_start, v_peak, j, a_max) → float
+ *     Closed-form distance for a 3-phase jerk-limited ramp.
+ *     Monotone in v_peak (for fixed v_start): higher v_peak → more distance.
  *     Symmetric: accel and decel ramps consume equal distance.
  *     This symmetry means maxReachableSpeed(v_a, dist) ≥ v_b implies
  *     decel from v_b to v_a also fits in dist.
+ *
+ *   cj_rampDistDeriv(v_start, v_peak, j, a_max) → float
+ *     Derivative ds/d(v_peak) of cj_rampDist, used by Newton's method.
  *
  * ─── plan_full feasibility ───
  *
@@ -188,7 +190,8 @@ static bool peakExceedsCeiling(float v_entry, float v_exit, float a_max_val,
   const float v_small = _MIN(v_entry, v_exit);
   const float v_large = _MAX(v_entry, v_exit);
   if (ceiling < v_large) return true;
-  return cj_totalRampDist(ceiling, v_small, v_large, j_max_val, a_max_val) < dist;
+  return cj_rampDist(v_small, ceiling, j_max_val, a_max_val)
+       + cj_rampDist(v_large, ceiling, j_max_val, a_max_val) < dist;
 }
 
 static float sumDist(const float* mm_arr,  uint8_t from, uint8_t to) {
@@ -460,7 +463,7 @@ class ConstantJerkBlockPlanner {
  private:
   /**
    * Max speed reachable from v_from over total_mm via jerk-limited ramp,
-   * capped by v_max. Returns lo (underestimate within 0.001 mm/s).
+   * capped by v_max. Newton's method on closed-form cj_rampDist.
    * When v_from > v_max, returns v_max (hard ceiling).
    * Monotone in total_mm: more distance → higher or equal result.
    */
@@ -468,24 +471,38 @@ class ConstantJerkBlockPlanner {
                           float v_max, float a_max_val, float j_max_val) {
     float v_trap = SQRT(v_from * v_from + 2.0f * a_max_val * total_mm);
     float hi = _MIN(v_max, v_trap);
-    float lo = v_from;
 
-    if (hi <= lo) return hi;
+    if (hi <= v_from) return hi;
+    if (cj_rampDist(v_from, hi, j_max_val, a_max_val) <= total_mm) return hi;
 
-    float pa, pb, pc;
-    float s = cj_planRamp(v_from, hi, j_max_val, a_max_val, false, pa, pb, pc);
-    if (s <= total_mm) return hi;
-
-    for (int i = 0; i < 32; i++) {
-      float mid = 0.5f * (lo + hi);
-      s = cj_planRamp(v_from, mid, j_max_val, a_max_val, false, pa, pb, pc);
-      if (s <= total_mm)
-        lo = mid;
-      else
-        hi = mid;
-      if (hi - lo < 0.001f) break;
+    // Initial guess: trapezoidal quadratic inverse
+    //   dv² + B*dv + C = 0  where B = 2*v + am²/j, C = 2*v*am²/j - 2*s*am
+    const float am2j = a_max_val * a_max_val / j_max_val;
+    const float B = 2.0f * v_from + am2j;
+    const float C = 2.0f * v_from * am2j - 2.0f * total_mm * a_max_val;
+    const float disc = B * B - 4.0f * C;
+    float vp;
+    if (disc >= 0.0f) {
+      const float dv = (-B + SQRT(disc)) * 0.5f;
+      vp = (dv > 0.0f) ? _MIN(v_from + dv, hi) : hi;
+    } else {
+      vp = hi;
     }
-    return lo;
+
+    // Newton: f(vp) = cj_rampDist(v_from, vp) - total_mm = 0
+    for (int i = 0; i < 10; i++) {
+      if (vp <= v_from) { vp = v_from + 0.001f; }
+      const float f = cj_rampDist(v_from, vp, j_max_val, a_max_val) - total_mm;
+      const float fp = cj_rampDistDeriv(v_from, vp, j_max_val, a_max_val);
+      if (fp < 1e-10f) break;
+      const float step = f / fp;
+      vp -= step;
+      if (vp < v_from) vp = v_from;
+      if (vp > hi) vp = hi;
+      if (f < 0.001f && f >= 0.0f) break; // close enough, undershooting
+      if (step < 0.001f && step > -0.001f) break;
+    }
+    return _MIN(vp, hi);
   }
 
   ConstantJerkTrajectoryGenerator traj;
@@ -500,22 +517,20 @@ class ConstantJerkBlockPlanner {
   /**
    * Min speed reachable by decelerating from v_from over total_mm.
    * If the decel ramp from v_from to 0 fits in total_mm, returns 0.
-   * Otherwise returns the speed at which the decel ramp exactly fills total_mm.
+   * Otherwise binary search on cj_rampDist (O(1) per iteration).
+   * Returns hi (slight overestimate within 0.001 mm/s).
    * Monotone decreasing in total_mm: more distance → lower result.
    */
   float minReachableSpeed(float v_from, float total_mm,
                           float a_max_val, float j_max_val) {
     if (v_from <= 0.0f || total_mm <= 0.0f) return v_from;
 
-    float pa, pb, pc;
-    float s = cj_planRamp(0, v_from, j_max_val, a_max_val, true, pa, pb, pc);
-    if (s <= total_mm) return 0;
+    if (cj_rampDist(0, v_from, j_max_val, a_max_val) <= total_mm) return 0;
 
     float lo = 0, hi = v_from;
     for (int i = 0; i < 32; i++) {
       float mid = 0.5f * (lo + hi);
-      s = cj_planRamp(mid, v_from, j_max_val, a_max_val, true, pa, pb, pc);
-      if (s <= total_mm)
+      if (cj_rampDist(mid, v_from, j_max_val, a_max_val) <= total_mm)
         hi = mid;
       else
         lo = mid;
