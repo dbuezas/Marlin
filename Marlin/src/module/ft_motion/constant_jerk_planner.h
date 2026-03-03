@@ -37,9 +37,9 @@
  * - Ignores Marlin's trapezoidal entry/exit speeds entirely
  * - Uses block->vmax_junction as the junction speed ceiling (geometric limit,
  *   never overwritten by the trapezoidal recalculate pass)
- * - Runs its own jerk-aware backward pass on all visible blocks
- * - Merges compatible consecutive blocks into a single S-curve, relaxing
- *   the zero-acceleration-at-junctions constraint
+ * - Runs its own jerk-aware backward pass on all visible blocks enforcing zero acceleration on junctions
+ * - Merges compatible consecutive blocks at the beginning of the buffer into two ("left" and "right") S-curves,
+ *   relaxing the zero-acceleration-at-junctions constraint
  *
  * ─── Notation ───
  *
@@ -56,20 +56,20 @@
  *
  *   Merge compatibility: max(accel)/min(accel) ≤ CJP_MERGE_AMAX_RATIO (1.1).
  *   Using min(accel) is conservative: the superblock is slower than a
- *   per-block pass would allow, so superblock-feasible ⇒ per-block feasible.
+ *   per-block pass would allow, so superblock-feasible ⇒ per-block feasible (ignoring zero accel at junciton constraint).
  *
  * ─── Key functions ───
  *
  *   maxReachableSpeed(v_from, total_mm, v_max, a_max, j_max) → float
  *     Max speed reachable from v_from over total_mm under jerk/accel limits,
- *     capped by v_max. Binary search over cj_planRamp (32 iterations).
+ *     capped by v_max. Binary search over cj_planRamp (32 iterations, exits early with a tolerance).
  *     When v_from > v_max, returns v_max (v_max is a hard ceiling).
- *     Returns lo (underestimate): actual reachable speed ∈ [lo, lo + 0.001].
+ *     Returns lo (slight underestimate): actual reachable speed ∈ [lo, lo + 0.001].
  *
  *   minReachableSpeed(v_from, total_mm, a_max, j_max) → float
  *     Min speed after decelerating from v_from over total_mm.
  *     Returns 0 if full stop fits; otherwise binary search.
- *     Returns hi (overestimate): actual min speed ∈ [hi - 0.001, hi].
+ *     Returns hi (slight overestimate): actual min speed ∈ [hi - 0.001, hi].
  *
  *   peakExceedsCeiling(v_entry, v_exit, a_max, j_max, dist, nominal, ceiling) → bool
  *     Whether the S-curve peak over dist strictly exceeds ceiling. O(1).
@@ -89,6 +89,9 @@
  *   plan_full(v0, v1, a_max, j, dist, nominal) requires:
  *     cj_planRamp(min(v0,v1), max(v0,v1), j, a_max) ≤ dist
  *   i.e. the ramp between the two boundary speeds must fit.
+ *   Due to the numeric tolerances above, it may not quite fit, in which case
+ *   it will increase jerk by 10%. This happens rarely and allows for faster,
+ *   higher tolerances
  *
  *   The planner ensures this in both directions:
  *     Forward: maxReachableSpeed(v0, dist) ≥ v1  (by construction)
@@ -107,7 +110,8 @@
  *                            min(nominal[i], vmax_junction[i]), accel[i], j)
  *
  *   The v_max parameter = min(nominal, vmax_junction) folds the junction
- *   ceiling into the search, so the result never exceeds either limit.
+ *   ceiling into the search for faster convergence, and so that the result
+ *   never exceeds either limit.
  *
  *   Property (backward-monotone):
  *     max_safe_entry over [i..N) ≤ max_safe_entry over [i..N+k)
@@ -116,14 +120,14 @@
  * ─── Merge algorithm ───
  *
  *   The visible buffer is partitioned into:
- *     left = [0..L),  right = [L..R),  tail = [R..N)
+ *     left = [0..left_end),  right = [left_end..right_end),  tail = [right_end..block_count)
  *
- *   Left and right are superblocks (same nominal, close accel).
+ *   Left and right are superblocks (same nominal, min accel).
  *   The junction speed between them:
  *     v_junction = min(max_left_exit, max_right_entry)
  *   where max_left_exit  = maxReachableSpeed(entry, left_mm, v_max, ...)
  *         max_right_entry = maxReachableSpeed(safe_entry[R], right_mm, v_max, ...)
- *   and v_max = min(nominal, vmax_junction[L]) caps at the junction ceiling.
+ *   and v_max = min(nominal, vmax_junction[left_end]) caps at the junction ceiling.
  *
  *   Decel check: minReachableSpeed(entry, left_mm) must be ≤ v_junction,
  *   otherwise the left can't slow down enough to reach the junction speed.
@@ -138,12 +142,12 @@
  *
  * ─── Cross-cycle guarantees ───
  *
- *   Each cycle emits left=[0..L) and remembers right=[L..R).
+ *   Each cycle emits left=[0..left_end) and remembers right=[left_end..right_end).
  *   Next cycle, those right blocks become the new (minimum) left group.
  *
  *   Stored between cycles:
- *     min_left_size  = len(right)           — guarantee (1)
- *     min_safe_exit  = max_safe_entry[R]    — guarantee (2)
+ *     min_left_size  = len(right_end - left_end)   — guarantee (1)
+ *     min_left_safe_exit  = max_safe_entry[R]      — guarantee (2)
  *
  *   Let V_j = junction speed chosen in previous cycle,
  *       V_e = max_safe_entry[R] from previous cycle.
@@ -162,18 +166,17 @@
  *       be longer, raising max_right_entry above V_e. A higher exit
  *       raises the peak, potentially exceeding interior junctions.
  *       When splitting can't resolve this (left_end == min_left_size,
- *       right_len ≤ 1), we fall back to min_safe_exit (= V_e), which
+ *       right_len ≤ 1), we fall back to min_left_safe_exit (= V_e), which
  *       reproduces the previous cycle's peak (same entry, exit, accel,
  *       distance). This is safe because V_e was the speed at which the
- *       previous cycle proved we could decelerate to a stop by the end
+ *       previous cycle proved we could decelerate to a stop by the previous end
  *       of the tail. Since the tail only grew (backward-monotone), we
  *       can still stop if needed. In practice the left group advances
- *       each cycle and connects to the new blocks before that happens.
+ *       each cycle and connects to the new blocks before a stand still happens.
  */
 
 /**
  * Does the S-curve peak velocity over dist strictly exceed ceiling?
- * O(1): a single cj_totalRampDist call replaces a binary search.
  * - ceiling ≥ v_nominal → false (peak capped by cruise speed)
  * - ceiling < max(v_entry, v_exit) → true (boundary already exceeds)
  * - otherwise: true iff ramp to ceiling fits in dist (peak goes higher)
@@ -208,7 +211,7 @@ class ConstantJerkBlockPlanner {
   void reset() {
     orig_block_index = 0;
     min_left_size = 1;
-    min_safe_exit = 0;
+    min_left_safe_exit = 0;
     traj.reset();
   }
 
@@ -264,7 +267,7 @@ class ConstantJerkBlockPlanner {
     float left_entry_speed = traj.getExitSpeed();
     if (left_entry_speed == 0) {
       min_left_size = 1; // TODO: do this more cleanly (if trajectory was reset, min_left_size should be reset too)
-      min_safe_exit = 0;
+      min_left_safe_exit = 0;
     }
 
     // Left-compatible group: cumulative superblock parameters for [0..i+1).
@@ -390,14 +393,14 @@ class ConstantJerkBlockPlanner {
           left_end = _MAX(left_end / 2, min_left_size);
           continue;
         }
-        // Can't split either side. Fall back to min_safe_exit — guarantee (2):
-        // previous cycle validated peak(V_j, min_safe_exit) ≤ interior junctions
-        // for these same blocks, so min_safe_exit is known-safe.
+        // Can't split either side. Fall back to min_left_safe_exit — guarantee (2):
+        // previous cycle validated peak(V_j, min_left_safe_exit) ≤ interior junctions
+        // for these same blocks, so min_left_safe_exit is known-safe.
 
         // left_len == min_left_size && right_len < 2
-        left_exit_speed = min_safe_exit;
+        left_exit_speed = min_left_safe_exit;
         min_left_size = 1;
-        min_safe_exit = right_len == 0 ? 0: minReachableSpeed(left_exit_speed, right_mm, right_a, jerk_max);
+        min_left_safe_exit = right_len == 0 ? 0: minReachableSpeed(left_exit_speed, right_mm, right_a, jerk_max);
         break;
 
       }
@@ -406,9 +409,9 @@ class ConstantJerkBlockPlanner {
 
       // Store right group state for next cycle's cross-cycle guarantees:
       //   min_left_size = right_len        → (1) preserves decel feasibility distance
-      //   min_safe_exit = safe_entry[R]    → (2) known-valid exit for fallback
+      //   min_left_safe_exit = safe_entry[R]    → (2) known-valid exit for fallback
       min_left_size = right_len;
-      min_safe_exit = max_safe_entry[right_end];
+      min_left_safe_exit = max_safe_entry[right_end];
       break;
     }
 
@@ -490,7 +493,7 @@ class ConstantJerkBlockPlanner {
   uint8_t group_block_count = 0;
   uint8_t group_buffer_consumed = 0;
   uint8_t min_left_size = 1;  // (1): previous right group size — floor for left splitting
-  float min_safe_exit = 0; // (2): previous right group exit — known-valid fallback
+  float min_left_safe_exit = 0; // (2): previous right group exit — known-valid fallback
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 
