@@ -107,6 +107,32 @@ static inline float cj_rampDistDeriv(float v_start, float v_peak, float j, float
     return 0.5f * (a_max / j + 2.0f * v_peak / a_max);
 }
 
+// Distance from start of a 3-phase decel ramp (V → v_exit) at which velocity = v_target.
+// Phase boundaries (s_endA, v_endA, s_endB, v_endB) and total_ramp_dist precomputed.
+// Requires: v_exit ≤ v_target ≤ V.
+static inline float cj_decelRampDistAtVelocity(
+    float V, float v_exit, float v_target,
+    float j, float a_max,
+    float s_endA, float v_endA, float s_endB, float v_endB,
+    float total_ramp_dist) {
+  if (v_target >= v_endA) {
+    // Phase A: jerk=-j, a goes 0→-a_peak, v goes V→v_endA
+    // s(v) = (2V + v) / 3 * sqrt(2*(V - v) / j)
+    const float dv = V - v_target;
+    return (dv <= 0.0f) ? 0.0f : (2.0f * V + v_target) / 3.0f * SQRT(2.0f * dv / j);
+  }
+  if (v_target >= v_endB) {
+    // Phase B: constant accel = -a_max, v goes v_endA→v_endB
+    // s(v) = s_endA + (v_endA² - v²) / (2 * a_max)
+    return s_endA + (v_endA * v_endA - v_target * v_target) / (2.0f * a_max);
+  }
+  // Phase C: jerk=+j, a goes -a_peak→0, v goes v_endB→v_exit
+  // By time-reversal from v_exit: s_from_end = (2*v_exit + v)/3 * sqrt(2*(v - v_exit)/j)
+  const float dv = v_target - v_exit;
+  const float s_from_end = (dv <= 0.0f) ? 0.0f : (2.0f * v_exit + v_target) / 3.0f * SQRT(2.0f * dv / j);
+  return total_ramp_dist - s_from_end;
+}
+
 class ConstantJerkTrajectoryGenerator : public TrajectoryGenerator {
 public:
   ConstantJerkTrajectoryGenerator() = default;
@@ -118,11 +144,9 @@ public:
   // Plan with explicit jerk and a_max (used by the block merging planner).
   // Jerk comes from cfg.jerk_max, passed through by the caller.
   // Returns false if infeasible (ramp between v0 and v1 exceeds distance).
-  void plan_full(float initial_speed_in, float final_speed_in,
+  bool plan_full(float initial_speed_in, float final_speed_in,
                  float accel_max_in, float jerk_in,
                  float distance_in, float v_nominal_in) {
-    // reset();
-
     v0 = initial_speed_in;
     v1 = final_speed_in;
     a_max = accel_max_in;
@@ -140,8 +164,6 @@ public:
 
       float minmimum_distance = cj_totalRampDist(v_large, v_small, v_large, j, a_max);
       if (minmimum_distance > distance) {
-        // Ramp between v0 and v1 exceeds distance.
-        // Position won't be continuous, this can happen due to numerical errors
         SERIAL_ECHOLNPGM("CJ ERROR: infeasible target:", distance,
           " minmimum_distance:", minmimum_distance,
           " v0:", v0,
@@ -149,8 +171,7 @@ public:
           " j:", j,
           " a_max:", a_max
         );
-        plan_full(initial_speed_in, final_speed_in, accel_max_in, jerk_in * 1.1, distance_in, v_nominal_in);
-        return;
+        return false;
 
       } else if (distance - minmimum_distance > 0.001f) {
         for (int i = 0; i < 48; i++) {
@@ -185,6 +206,7 @@ public:
 
     total_duration = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     buildPhaseCache();
+    return true;
   }
 
   void planRunout(const float duration) override {
@@ -229,6 +251,51 @@ public:
     return phaseJerk(ph);
   }
 
+  // Get velocity at a given distance along the trajectory.
+  // Uses Newton's method for jerk phases, quadratic formula for constant-accel phases.
+  float getVelocityAtDistance(const float d) const {
+    if (d <= 0.0f) return v0;
+    if (d >= distance) return v1;
+    const int ph = findPhaseByDist(d);
+    const float delta_s = d - phase_start_pos[ph];
+    const float v_ph = phase_start_v[ph];
+    const float a_ph = phase_start_a[ph];
+    const float jk = phaseJerk(ph);
+
+    if (jk == 0.0f) {
+      // Constant accel: delta_s = v0*t + 0.5*a*t²
+      if (a_ph == 0.0f) return v_ph;  // cruise phase
+      // t = (-v0 + sqrt(v0² + 2*a*delta_s)) / a
+      const float disc = v_ph * v_ph + 2.0f * a_ph * delta_s;
+      const float t = (-v_ph + SQRT(_MAX(0.0f, disc))) / a_ph;
+      return v_ph + a_ph * t;
+    }
+
+    // Jerk phase: find t such that s(t) = delta_s, then return v(t).
+    // s(t) = v0*t + 0.5*a0*t² + (jk/6)*t³
+    // Hybrid Newton/bisection: Newton when f' is healthy, bisection when f'≈0.
+    const float jk6 = (1.0f / 6.0f) * jk;
+    const float ph_end_pos = (ph < 6) ? phase_start_pos[ph + 1] : distance;
+    const float phase_dist = ph_end_pos - phase_start_pos[ph];
+    float t_lo = 0.0f, t_hi = phase_dt[ph];
+    float t = (phase_dist > 0.0f) ? phase_dt[ph] * (delta_s / phase_dist) : 0.0f;
+    for (int i = 0; i < 16; i++) {
+      const float f = v_ph * t + 0.5f * a_ph * t * t + jk6 * t * t * t - delta_s;
+      // Update bracket
+      if (f < 0.0f) t_lo = t; else t_hi = t;
+      if (t_hi - t_lo < 1e-7f) break;
+      // f' = velocity at t, always ≥ 0
+      const float fp = v_ph + a_ph * t + 0.5f * jk * t * t;
+      if (fp > 1e-6f) {
+        t -= f / fp;                                  // Newton step
+        if (t < t_lo || t > t_hi) t = 0.5f * (t_lo + t_hi); // escaped bracket → bisect
+      } else {
+        t = 0.5f * (t_lo + t_hi);                    // f'≈0 → bisect
+      }
+    }
+    return v_ph + a_ph * t + 0.5f * jk * t * t;
+  }
+
   float getExitSpeed() const { return v1; }
 
   void reset() override {
@@ -261,6 +328,12 @@ private:
   int findPhase(float t) const {
     for (int i = 0; i < 7; ++i)
       if (t < phase_start_time[i] + phase_dt[i]) return i;
+    return 6;
+  }
+
+  int findPhaseByDist(float d) const {
+    for (int i = 0; i < 6; ++i)
+      if (d < phase_start_pos[i + 1]) return i;
     return 6;
   }
 
