@@ -221,6 +221,7 @@ class ConstantJerkBlockPlanner {
     orig_block_index = 0;
     min_left_size = 1;
     min_left_safe_exit = 0;
+    cant_brake_count = 0;
     traj.reset();
   }
 
@@ -319,12 +320,56 @@ class ConstantJerkBlockPlanner {
         : max_safe_entry[block_count];  // no right side: exit = safe entry at end
       float target_exit = maxReachableSpeed(left_entry_speed, left_mm, v_cap, left_a, jerk_max);
 
-      // Ensure target_exit is achievable: if left can't decelerate enough, raise target.
+      // ─── "Can't brake" corner case ───
+      //
+      // Cycle N planned left=[0..L), exit=V_j, right=[L..R).
+      // The right side validated: decel from V_j to safe_entry[R] fits.
+      // We stored known_left_size = R-L, known_left_safe_exit = safe_entry[L].
+      //
+      // Cycle N+1: old right blocks are now [0..known_left_size).
+      // Left-compatible scan might extend further, e.g. left_end=8.
+      // But interior junction check finds a violation at block k<known_left_size,
+      // so we split: left_end=k (fewer blocks than known_left_size).
+      //
+      // Now left=[0..k) has entry=V_j (committed by previous cycle), but
+      // short distance. max_right_entry_v might be low (say 30mm/s), so
+      // v_cap=30. But minReachableSpeed(V_j, left_mm) might be 80 — we
+      // physically can't decelerate from V_j to 30 in only k blocks.
+      //
+      // Current fallback: target_exit = max(known_left_safe_exit, min_exit).
+      // Problem: this exit (80) exceeds what the right side can accept (30).
+      // Result: velocity discontinuity at the left/right boundary.
+      //
+      // Additional problem: plan_full(V_j, 80, ...) is a normal S-curve that
+      // may accelerate before decelerating (accel ramp → cruise → decel ramp),
+      // potentially violating the same interior junctions that caused the split.
+      //
+      // TODO: Proper fix — when the normal path fails and left_end < known_left_size,
+      // fall back to a decel-only plan over known_left_size blocks:
+      //   plan_full(V_j, known_left_safe_exit, a, j, dist, nominal=known_left_safe_exit)
+      // Setting nominal=known_left_safe_exit forces the trajectory to decel from V_j
+      // down to known_left_safe_exit and cruise there — no acceleration above V_j.
+      // This is safe because:
+      //   (a) The previous cycle validated decel from V_j over these same blocks
+      //   (b) known_left_safe_exit ≤ all interior junctions (since the previous
+      //       cycle's decel passed through them at higher speeds, monotonically
+      //       decreasing)
+      //   (c) The remaining blocks after known_left_size can handle
+      //       known_left_safe_exit (backward-monotone: safe_entry only grows)
+      //
+      // This also requires:
+      //   - Renaming min_left_size → known_left_size (not a floor for splitting,
+      //     just a fallback extent)
+      //   - Storing known_left_size as ceil(blocks needed to decel from V_j to
+      //     safe_exit), not the full right size — the "slack" blocks beyond the
+      //     decel distance don't need to be preserved
+      //   - Storing the old safe exit speed separately (known_left_safe_exit),
+      //     because the new max_safe_entry[left_end] may be higher due to new
+      //     tail blocks (backward-monotone), and we need the original validated value
       if (target_exit < left_entry_speed) {
         float min_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
         if (min_exit > target_exit) {
-          // Can't decelerate to target_exit. Fall back to min_left_safe_exit
-          // (validated by previous cycle for these same blocks).
+          cant_brake_count++;
           target_exit = _MAX(min_left_safe_exit, min_exit);
         }
       }
@@ -410,6 +455,7 @@ class ConstantJerkBlockPlanner {
   uint8_t blockCount() const { return group_block_count; }
   uint8_t bufferConsumed() const { return group_buffer_consumed; }
   uint8_t currentBlockIndex() const { return orig_block_index; }
+  uint16_t cantBrakeCount() const { return cant_brake_count; }
 
  private:
   /**
@@ -508,6 +554,7 @@ class ConstantJerkBlockPlanner {
   uint8_t group_buffer_consumed = 0;
   uint8_t min_left_size = 1;  // (1): previous right group size — floor for left splitting
   float min_left_safe_exit = 0; // (2): previous right group exit — known-valid fallback
+  uint16_t cant_brake_count = 0; // diagnostic: how many times the can't-brake fallback triggered
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 
