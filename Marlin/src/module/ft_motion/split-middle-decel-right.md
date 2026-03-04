@@ -198,9 +198,9 @@ New flow:
                                              max_safe_entry[block_count],  // 0 if end of buffer
                                              right_a, jerk_max);
 
-    // Step 3: Plan left
-    float left_mm = cum_mm[left_end - 1];
-    float left_a = cum_min_a[left_end - 1];
+    // Step 3: Plan left (compute on demand, no cumulative arrays)
+    float left_mm = sumDist(mm, 0, left_end);
+    float left_a = minVal(accel, 0, left_end);
     float left_nominal = nominal[0];
     // v_cap may be < left_entry_speed (e.g. max_right_entry is low).
     // In that case maxReachableSpeed returns v_cap (it's a ceiling).
@@ -222,7 +222,7 @@ New flow:
     if (left_end > 1) {
       uint8_t rightmost_violation = 0;
       for (uint8_t k = left_end - 1; k >= 1; k--) {  // right to left, stop on first
-        float d_k = cum_mm[k - 1];  // distance to junction k from left start
+        float d_k = sumDist(mm, 0, k);  // distance to junction k from left start
         float v_at_k = traj.getVelocityAtDistance(d_k);
         if (v_at_k > vmax_junction[k] + 0.1f) {  // tolerance
           rightmost_violation = k;
@@ -268,13 +268,19 @@ right side now computes its own max entry via pure decel.
 - `min_left_size` = number of right blocks (prevents splitting left below previous right size)
 - `min_left_safe_exit` = `max_safe_entry[left_end]` (conservative fallback from backward pass)
 
-#### 2d. Remove right-compatible group scan
+#### 2d. Remove right-compatible group scan and cumulative arrays
 
 Remove lines 306-318 (current right-compatible group finding). The right side is now
 ALL remaining blocks `[left_end..block_count)`. No same-nominal or accel-ratio
 compatibility needed — the right side is modeled as pure decel with `min(accel)`.
 
-Left compatibility scan (lines 286-303) is kept unchanged.
+Remove cumulative arrays `cum_mm[]`, `cum_min_a[]`, `cum_vmax_junction[]` (lines 280-303).
+These were an optimization for the old algorithm that iterated many times with binary splits.
+With the new algorithm, `left_end` only decreases (few iterations), so computing
+`sumDist(mm, 0, left_end)` and `minVal(accel, 0, left_end)` on demand is cheap and simpler.
+
+Left compatibility scan is kept but simplified: just find `left_end` (max compatible extent)
+by scanning blocks with same `nominal[0]` and accel ratio ≤ 1.1. No cumulative arrays needed.
 
 ### File 3: `test_trajectory.cpp`
 
@@ -401,6 +407,7 @@ at buffer end). The right decel computation is skipped (no right blocks). This i
 - `plan_full()` — returns bool, jerk inflation removed (see 1b)
 - Merge loop in `planNext()` — completely rewritten (see 2b)
 - Right-compatible group scan — removed (see 2d)
+- Cumulative arrays (`cum_mm`, `cum_min_a`, `cum_vmax_junction`) — removed, compute on demand (see 2d)
 
 ## What This Plan Does NOT Change
 
