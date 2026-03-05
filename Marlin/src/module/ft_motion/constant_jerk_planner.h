@@ -147,7 +147,7 @@
  *                  max_right_entry)
  *      target_exit = maxReachableSpeed(left_entry, left_mm, v_cap, ...)
  *      If left can't decelerate to target_exit (minReachableSpeed > target),
- *      fall back to max(min_left_safe_exit, minReachableSpeed).
+ *      trigger the can't-brake fallback (see Cross-cycle guarantees).
  *
  *   4. Plan the left trajectory via plan_full(). If infeasible (returns
  *      false), inflate jerk by 1.1× up to 5 times as a numerical fallback.
@@ -163,24 +163,34 @@
  *
  * ─── Cross-cycle guarantees ───
  *
- *   Each cycle emits left=[0..left_end) and the remaining blocks
- *   [left_end..block_count) become (at minimum) the next cycle's left.
+ *   Each cycle emits left=[0..left_end) and advances the buffer past those
+ *   blocks. The remaining blocks [left_end..block_count) stay in the buffer
+ *   and become (at minimum) the start of the next cycle's visible window.
+ *   This is the key insight: this cycle's RIGHT side becomes next cycle's
+ *   LEFT side (plus any newly arrived blocks appended to the tail).
  *
  *   Stored between cycles:
- *     min_left_size      = block_count - left_end  — guarantee (1)
- *     min_left_safe_exit = max_safe_entry[left_end] — guarantee (2)
+ *     last_right_exit     = max_safe_entry[block_count] — the speed at the
+ *                           far end of the visible buffer (typically 0,
+ *                           since the backward pass assumes full stop).
+ *     last_right_decel_mm = distance the right side needs to decel from
+ *                           the emitted target_exit down to last_right_exit.
  *
- *   (1) The current right side was validated: the left can decelerate from
- *       its exit speed to max_safe_entry[left_end] over the right's distance.
- *       Next cycle, those same blocks form the new left. min_left_size
- *       prevents splitting below this size, preserving the validated distance.
- *       By backward-monotone, new max_safe_entry ≥ old (tail grew).
+ *   These are stored because the right side's blocks will form the next
+ *   cycle's left. If the next cycle can't brake to its new target_exit,
+ *   it can instead decel to last_right_exit — a speed we know the tail
+ *   can handle because backward-monotone guarantees that adding blocks
+ *   to the tail only raises (or preserves) safe entry speeds.
  *
- *   (2) When the new left can't satisfy interior junction ceilings even at
- *       minimum split size, we fall back to min_left_safe_exit as the exit
- *       speed. This reproduces the speed profile validated by the previous
- *       cycle (same blocks, same entry, same distance, lower or equal exit).
- *       Safe because max_safe_entry only grows as the tail extends.
+ *   Can't-brake fallback (when minReachableSpeed > target_exit):
+ *   1. If last_right_decel_mm > 0 and last_right_exit < left_entry_speed:
+ *      expand left to cover the decel ramp, decel to last_right_exit,
+ *      then cruise. If expansion runs out of blocks, fall back to
+ *      minReachableSpeed over the expanded left.
+ *   2. Otherwise: use minReachableSpeed (best achievable exit speed).
+ *   Both paths break immediately (skip junction check).
+ *   Safe because backward-monotone: the new tail (with more blocks
+ *   appended since last cycle) can handle last_right_exit.
  */
 
 /**
@@ -219,8 +229,8 @@ class ConstantJerkBlockPlanner {
  public:
   void reset() {
     orig_block_index = 0;
-    min_left_size = 1;
-    min_left_safe_exit = 0;
+    last_right_exit = 0;
+    last_right_decel_mm = 0;
     cant_brake_count = 0;
     traj.reset();
   }
@@ -276,8 +286,13 @@ class ConstantJerkBlockPlanner {
     }
     float left_entry_speed = traj.getExitSpeed();
     if (left_entry_speed == 0) {
-      min_left_size = 1; // TODO: do this more cleanly (if trajectory was reset, min_left_size should be reset too)
-      min_left_safe_exit = 0;
+      // Starting from rest: no previous cycle to honor.
+      // TODO: handle this more cleanly — this happens when the trajectory
+      // generator was reset externally (e.g. by ft_motion on idle/error).
+      // Ideally the planner would detect the reset via a flag rather than
+      // inferring it from exit speed being zero.
+      last_right_exit = 0;
+      last_right_decel_mm = 0;
     }
 
     // Left-compatible group: find max extent with same nominal and accel ratio ≤ 1.1.
@@ -320,57 +335,77 @@ class ConstantJerkBlockPlanner {
         : max_safe_entry[block_count];  // no right side: exit = safe entry at end
       float target_exit = maxReachableSpeed(left_entry_speed, left_mm, v_cap, left_a, jerk_max);
 
-      // ─── "Can't brake" corner case ───
+      // ─── "Can't brake" fallback ───
       //
-      // Cycle N planned left=[0..L), exit=V_j, right=[L..R).
-      // The right side validated: decel from V_j to safe_entry[R] fits.
-      // We stored known_left_size = R-L, known_left_safe_exit = safe_entry[L].
+      // Left can't decelerate to target_exit within left_mm.
+      // Strategy: decel to last_right_exit instead — a speed we know the
+      // tail can handle because the previous cycle's right side (now our
+      // left) was proven safe down to that speed, and backward-monotone
+      // guarantees the new (longer) tail is at least as permissive.
       //
-      // Cycle N+1: old right blocks are now [0..known_left_size).
-      // Left-compatible scan might extend further, e.g. left_end=8.
-      // But interior junction check finds a violation at block k<known_left_size,
-      // so we split: left_end=k (fewer blocks than known_left_size).
-      //
-      // Now left=[0..k) has entry=V_j (committed by previous cycle), but
-      // short distance. max_right_entry_v might be low (say 30mm/s), so
-      // v_cap=30. But minReachableSpeed(V_j, left_mm) might be 80 — we
-      // physically can't decelerate from V_j to 30 in only k blocks.
-      //
-      // Current fallback: target_exit = max(known_left_safe_exit, min_exit).
-      // Problem: this exit (80) exceeds what the right side can accept (30).
-      // Result: velocity discontinuity at the left/right boundary.
-      //
-      // Additional problem: plan_full(V_j, 80, ...) is a normal S-curve that
-      // may accelerate before decelerating (accel ramp → cruise → decel ramp),
-      // potentially violating the same interior junctions that caused the split.
-      //
-      // TODO: Proper fix — when the normal path fails and left_end < known_left_size,
-      // fall back to a decel-only plan over known_left_size blocks:
-      //   plan_full(V_j, known_left_safe_exit, a, j, dist, nominal=known_left_safe_exit)
-      // Setting nominal=known_left_safe_exit forces the trajectory to decel from V_j
-      // down to known_left_safe_exit and cruise there — no acceleration above V_j.
-      // This is safe because:
-      //   (a) The previous cycle validated decel from V_j over these same blocks
-      //   (b) known_left_safe_exit ≤ all interior junctions (since the previous
-      //       cycle's decel passed through them at higher speeds, monotonically
-      //       decreasing)
-      //   (c) The remaining blocks after known_left_size can handle
-      //       known_left_safe_exit (backward-monotone: safe_entry only grows)
-      //
-      // This also requires:
-      //   - Renaming min_left_size → known_left_size (not a floor for splitting,
-      //     just a fallback extent)
-      //   - Storing known_left_size as ceil(blocks needed to decel from V_j to
-      //     safe_exit), not the full right size — the "slack" blocks beyond the
-      //     decel distance don't need to be preserved
-      //   - Storing the old safe exit speed separately (known_left_safe_exit),
-      //     because the new max_safe_entry[left_end] may be higher due to new
-      //     tail blocks (backward-monotone), and we need the original validated value
+      // We expand left to cover the decel ramp distance, then cruise at
+      // last_right_exit for any remaining distance. Both can't-brake paths
+      // break immediately (skip junction check) to avoid cascade.
+      // If expansion runs out of blocks, fall back to minReachableSpeed.
       if (target_exit < left_entry_speed) {
         float min_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
         if (min_exit > target_exit) {
           cant_brake_count++;
-          target_exit = _MAX(min_left_safe_exit, min_exit);
+          // Try decel-then-cruise to last_right_exit if it's a valid
+          // decel target (below entry speed).
+          if (last_right_decel_mm > 0 && last_right_exit < left_entry_speed) {
+            // Expand left to cover the decel ramp distance, recomputing
+            // with actual block accels as we go.
+            float cum = 0;
+            float cur_a = accel[0];
+            left_end = 0;
+            for (uint8_t k = 0; k < block_count; k++) {
+              cum += mm[k];
+              cur_a = _MIN(cur_a, accel[k]);
+              left_end = k + 1;
+              float needed = cj_rampDist(last_right_exit, left_entry_speed, jerk_max, cur_a);
+              if (cum >= needed) break;
+            }
+            left_mm = sumDist(mm, 0, left_end);
+            left_a = minVal(accel, 0, left_end);
+            // Verify the decel ramp fits in the expanded distance.
+            // If the expansion exhausted all blocks without enough distance,
+            // fall back to minReachableSpeed over the expanded left.
+            float decel_needed = cj_rampDist(last_right_exit, left_entry_speed, jerk_max, left_a);
+            if (left_mm < decel_needed) {
+              target_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
+            } else {
+              target_exit = last_right_exit;
+            }
+            // Nominal must be >= left_entry_speed so plan_full's peak
+            // can reach entry speed (v_peak >= max(v0,v1)).
+            float plan_jerk = jerk_max;
+            float plan_nominal = _MAX(left_entry_speed, target_exit);
+            bool ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, plan_nominal);
+            if (!ok) {
+              for (int retry = 0; retry < 5 && !ok; retry++) {
+                plan_jerk *= 1.1f;
+                ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, plan_nominal);
+              }
+            }
+            left_exit_speed = target_exit;
+            storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
+            break;
+          }
+          // No valid decel-then-cruise target. Use best achievable exit speed
+          // and break immediately to prevent junction check cascade.
+          target_exit = min_exit;
+          float plan_jerk = jerk_max;
+          bool ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, left_nominal);
+          if (!ok) {
+            for (int retry = 0; retry < 5 && !ok; retry++) {
+              plan_jerk *= 1.1f;
+              ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, left_nominal);
+            }
+          }
+          left_exit_speed = target_exit;
+          storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
+          break;
         }
       }
 
@@ -385,8 +420,7 @@ class ConstantJerkBlockPlanner {
           feasible = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, left_nominal);
         }
         left_exit_speed = target_exit;
-        min_left_size = left_end < block_count ? block_count - left_end : 1;
-        min_left_safe_exit = left_end < block_count ? max_safe_entry[left_end] : 0;
+        storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
         break;
       }
 
@@ -414,8 +448,7 @@ class ConstantJerkBlockPlanner {
 
       // Success
       left_exit_speed = target_exit;
-      min_left_size = left_end < block_count ? block_count - left_end : 1;
-      min_left_safe_exit = left_end < block_count ? max_safe_entry[left_end] : 0;
+      storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
       break;
     }
 
@@ -496,10 +529,53 @@ class ConstantJerkBlockPlanner {
       vp -= step;
       if (vp < v_from) vp = v_from;
       if (vp > hi) vp = hi;
-      if (f < 0.001f && f >= 0.0f) break; // close enough, undershooting
+      if (f <= 0.0f && f > -0.01f) break; // close enough, conservative
       if (step < 0.001f && step > -0.001f) break;
     }
-    return _MIN(vp, hi);
+    // Guarantee: returned speed is conservative (ramp fits in distance).
+    // Newton may converge slightly above the root; bisect down if needed.
+    vp = _MIN(vp, hi);
+    if (vp > v_from && cj_rampDist(v_from, vp, j_max_val, a_max_val) > total_mm) {
+      float lo_v = v_from, hi_v = vp;
+      for (int i = 0; i < 10; i++) {
+        float mid = 0.5f * (lo_v + hi_v);
+        if (cj_rampDist(v_from, mid, j_max_val, a_max_val) <= total_mm)
+          lo_v = mid;
+        else
+          hi_v = mid;
+      }
+      vp = lo_v;
+    }
+    return vp;
+  }
+
+  /** Store right-side state for the next cycle's can't-brake fallback.
+   *
+   *  This cycle's right blocks [left_end..block_count) will become the
+   *  start of the next cycle's visible window. We store:
+   *
+   *  last_right_exit     = max_safe_entry[block_count] — the speed at the
+   *    end of the current buffer (typically 0: backward pass assumes stop).
+   *  last_right_decel_mm = distance to decel from this cycle's emitted
+   *    exit speed (target_exit) down to last_right_exit.
+   *
+   *  If the next cycle can't brake to its computed target, it can instead
+   *  decel to last_right_exit (a known-safe speed), then cruise. This works
+   *  because backward-monotone guarantees: the new tail (old right + new
+   *  blocks) can handle any speed the old tail could handle.
+   */
+  void storeKnownRight(const float* accel_arr,
+                       uint8_t left_end, uint8_t block_count,
+                       float target_exit, const float* max_safe_entry,
+                       float jerk_max) {
+    if (left_end < block_count) {
+      last_right_exit = max_safe_entry[block_count];
+      float right_a = minVal(accel_arr, left_end, block_count);
+      last_right_decel_mm = cj_rampDist(last_right_exit, target_exit, jerk_max, right_a);
+    } else {
+      last_right_exit = 0;
+      last_right_decel_mm = 0;
+    }
   }
 
   /**
@@ -552,9 +628,9 @@ class ConstantJerkBlockPlanner {
   uint8_t orig_block_index = 0;
   uint8_t group_block_count = 0;
   uint8_t group_buffer_consumed = 0;
-  uint8_t min_left_size = 1;  // (1): previous right group size — floor for left splitting
-  float min_left_safe_exit = 0; // (2): previous right group exit — known-valid fallback
-  uint16_t cant_brake_count = 0; // diagnostic: how many times the can't-brake fallback triggered
+  float last_right_exit = 0;        // speed at end of last cycle's buffer (right becomes next left)
+  float last_right_decel_mm = 0;    // distance last right needed to decel from emitted exit to last_right_exit
+  uint16_t cant_brake_count = 0;    // diagnostic: how many times the can't-brake fallback triggered
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 
