@@ -127,19 +127,25 @@
  * ─── Merge algorithm (split-in-middle, right-decel-first) ───
  *
  *   The visible buffer is partitioned into:
- *     left = [0..left_end),  right = [left_end..block_count)
+ *     left = [0..left_end),  right = [left_end..right_end),  tail = [right_end..N)
  *
  *   Left is a merge-compatible superblock (same nominal, accel ratio ≤ 1.1).
- *   Right is ALL remaining blocks, modeled as a pure deceleration ramp
- *   (not planned as an S-curve — only used to determine left's exit speed).
+ *   Right is modeled as a pure deceleration ramp (not planned as an S-curve —
+ *   only used to determine left's exit speed).
+ *
+ *   When the buffer is not full, no more blocks are coming: left can take all
+ *   blocks and right_end = block_count (no tail). When the buffer is full,
+ *   left is capped to half and right is capped to half-1 blocks, leaving at
+ *   least one tail block. Right decels to max_safe_entry[right_end] (non-zero)
+ *   instead of 0 — the tail blocks guarantee that speed is braking-safe.
  *
  *   Algorithm:
  *   1. Find left-compatible extent: scan blocks with same nominal and
- *      accel ratio ≤ CJP_MERGE_AMAX_RATIO, up to block_count/2.
+ *      accel ratio ≤ CJP_MERGE_AMAX_RATIO, up to half when buffer is full.
  *
  *   2. Compute v_right_entry_max via maxDecelEntry(): the maximum speed
- *      at which the right side [left_end..block_count) can be entered
- *      while decelerating to max_safe_entry[block_count], respecting
+ *      at which the right side [left_end..right_end) can be entered
+ *      while decelerating to max_safe_entry[right_end], respecting
  *      all interior junction ceilings along the way.
  *
  *   3. Compute left exit speed:
@@ -258,9 +264,13 @@ class ConstantJerkBlockPlanner {
     // Look ahead at future blocks.
     // get_future_block(offset) returns block_buffer[tail + offset].
     // The current block is at tail (offset 0), so offset 1 = next block.
+    // Track whether the buffer is full (all BLOCK_BUFFER_SIZE slots occupied).
+    // Sync blocks occupy buffer slots but are skipped for planning,
+    // so block_count alone can't determine buffer fullness.
+    bool buffer_full = true;
     for (uint8_t i = 0; i < BLOCK_BUFFER_SIZE; i++) {
       block_t* blk = planner.get_future_block(i, false);
-      if (!blk) break;
+      if (!blk) { buffer_full = false; break; }
       if (blk->is_sync()) continue; // skip sync blocks in lookahead
 
       buf_offset[block_count] = i;
@@ -296,10 +306,14 @@ class ConstantJerkBlockPlanner {
     }
 
     // Left-compatible group: find max extent with same nominal and accel ratio ≤ 1.1.
+    // When the buffer is not full, no more blocks are coming, so left can take
+    // all blocks. When full, cap left to half so the right side retains enough
+    // blocks for decel analysis.
     uint8_t left_end = 1;
+    const uint8_t half = (block_count + 1) / 2;
     {
       float a_min = accel[0], a_max_l = accel[0];
-      const uint8_t max_left_end = _MIN(block_count, (uint8_t)(BLOCK_BUFFER_SIZE / 2));
+      const uint8_t max_left_end = buffer_full ? half : block_count;
       for (uint8_t i = 1; i < max_left_end; i++) {
         if (nominal[i] != nominal[0]) break;
         float new_a_min = _MIN(a_min, accel[i]);
@@ -312,17 +326,26 @@ class ConstantJerkBlockPlanner {
     }
 
     // New merge algorithm: split-in-middle, right-decel-first.
-    // Right side = ALL remaining blocks [left_end..block_count), modeled as pure decel.
+    // Right side = blocks [left_end..right_end), modeled as pure decel.
+    // When buffer is full, right is capped to half-1 blocks, leaving at least
+    // one tail block beyond right. This way right doesn't have to decel to 0 —
+    // it decels to max_safe_entry[right_end], and the tail blocks guarantee
+    // that speed is braking-safe.
     float v_left_exit;
 
     while (true) {
+      const uint8_t right_end = buffer_full
+        ? _MIN((uint8_t)(left_end + half - 1), (uint8_t)(block_count - 1))
+        : block_count;
+      const float right_exit_v = max_safe_entry[right_end];
+
       // Step 2: Compute v_right_entry_max via decel analysis
       float v_right_entry_max = 0;
-      if (left_end < block_count) {
-        float a_right = minVal(accel, left_end, block_count);
+      if (left_end < right_end) {
+        float a_right = minVal(accel, left_end, right_end);
         v_right_entry_max = maxDecelEntry(mm, vmax_junction,
-                                           left_end, block_count,
-                                           max_safe_entry[block_count],
+                                           left_end, right_end,
+                                           right_exit_v,
                                            a_right, j_max);
       }
 
@@ -330,9 +353,9 @@ class ConstantJerkBlockPlanner {
       float dist_left = sumDist(mm, 0, left_end);
       float a_left = minVal(accel, 0, left_end);
       float v_left_nominal = nominal[0];
-      float v_cap = left_end < block_count
+      float v_cap = left_end < right_end
         ? _MIN(v_left_nominal, _MIN(nominal[left_end], _MIN(vmax_junction[left_end], v_right_entry_max)))
-        : max_safe_entry[block_count];  // no right side: exit = safe entry at end
+        : right_exit_v;  // no right side: exit = safe entry at right_end
       float v_target_exit = maxReachableSpeed(v_left_entry, dist_left, v_cap, a_left, j_max);
 
       // ─── "Can't brake" fallback ───
