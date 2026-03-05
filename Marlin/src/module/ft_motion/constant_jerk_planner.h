@@ -62,34 +62,34 @@
  *
  * ─── Key functions ───
  *
- *   maxReachableSpeed(v_from, total_mm, v_max, a_max, j_max) → float
- *     Max speed reachable from v_from over total_mm under jerk/accel limits,
+ *   maxReachableSpeed(v_from, dist_total, v_max, a_max, j_max) → float
+ *     Max speed reachable from v_from over dist_total under jerk/accel limits,
  *     capped by v_max. Newton's method on closed-form cj_rampDist (~4 iters).
  *     When v_from > v_max, returns v_max (v_max is a hard ceiling).
  *
- *   minReachableSpeed(v_from, total_mm, a_max, j_max) → float
- *     Min speed after decelerating from v_from over total_mm.
+ *   minReachableSpeed(v_from, dist_total, a_max, j_max) → float
+ *     Min speed after decelerating from v_from over dist_total.
  *     Returns 0 if full stop fits; otherwise binary search on cj_rampDist.
  *     Returns hi (slight overestimate): actual min speed ∈ [hi - 0.001, hi].
  *
- *   maxDecelEntry(mm, vjunction, from, to, v_exit, a_max, j_max) → float
+ *   maxDecelEntry(mm, v_junction, from, to, v_exit, a_max, j_max) → float
  *     Max entry speed for a pure decel ramp over blocks [from..to),
  *     decelerating to v_exit while respecting all interior junction
  *     ceilings. Uses cj_decelRampDistAtVelocity() (O(1)) to check where
- *     the decel ramp reaches each ceiling and lowers V when violated.
+ *     the decel ramp reaches each ceiling and lowers v_entry when violated.
  *
- *   cj_rampDist(v_start, v_peak, j, a_max) → float
+ *   cj_rampDist(v_start, v_peak, j_max, a_max) → float
  *     Closed-form distance for a 3-phase jerk-limited ramp.
  *     Monotone in v_peak (for fixed v_start): higher v_peak → more distance.
  *     Symmetric: accel and decel ramps consume equal distance.
  *     This symmetry means maxReachableSpeed(v_a, dist) ≥ v_b implies
  *     decel from v_b to v_a also fits in dist.
  *
- *   cj_rampDistDeriv(v_start, v_peak, j, a_max) → float
+ *   cj_rampDistDeriv(v_start, v_peak, j_max, a_max) → float
  *     Derivative ds/d(v_peak) of cj_rampDist, used by Newton's method.
  *
- *   cj_decelRampDistAtVelocity(V, v_exit, v_target, j, a_max, ...) → float
- *     O(1) distance from start of a 3-phase decel ramp (V → v_exit) to where
+ *   cj_decelRampDistAtVelocity(v_entry, v_exit, v_target, j_max, a_max, ...) → float
+ *     O(1) distance from start of a 3-phase decel ramp (v_entry → v_exit) to where
  *     velocity first drops to v_target. Used by maxDecelEntry to check
  *     junction ceilings without simulating the full ramp.
  *
@@ -100,9 +100,9 @@
  *
  * ─── plan_full feasibility ───
  *
- *   plan_full(v0, v1, a_max, j, dist, nominal) → bool
+ *   plan_full(v_entry, v_exit, a_max, j_max, dist_total, v_nominal) → bool
  *     Returns false if the ramp between boundary speeds doesn't fit:
- *       cj_planRamp(min(v0,v1), max(v0,v1), j, a_max) > dist
+ *       cj_planRamp(min(v_entry,v_exit), max(v_entry,v_exit), j_max, a_max) > dist_total
  *     The planner handles infeasibility by either splitting the left group
  *     or, as a last resort, inflating jerk by 10% (up to 5 retries) to
  *     absorb borderline numerical precision issues.
@@ -115,7 +115,7 @@
  *   Computed right-to-left:
  *     max_safe_entry[N] = 0
  *     max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i+1], mm[i],
- *                            min(nominal[i], vmax_junction[i]), accel[i], j)
+ *                            min(nominal[i], vmax_junction[i]), accel[i], j_max)
  *
  *   The v_max parameter = min(nominal, vmax_junction) folds the junction
  *   ceiling into the search so the result never exceeds either limit.
@@ -137,16 +137,16 @@
  *   1. Find left-compatible extent: scan blocks with same nominal and
  *      accel ratio ≤ CJP_MERGE_AMAX_RATIO, up to block_count/2.
  *
- *   2. Compute max_right_entry via maxDecelEntry(): the maximum speed
+ *   2. Compute v_right_entry_max via maxDecelEntry(): the maximum speed
  *      at which the right side [left_end..block_count) can be entered
  *      while decelerating to max_safe_entry[block_count], respecting
  *      all interior junction ceilings along the way.
  *
  *   3. Compute left exit speed:
- *      v_cap = min(left_nominal, right_nominal, vmax_junction[left_end],
- *                  max_right_entry)
- *      target_exit = maxReachableSpeed(left_entry, left_mm, v_cap, ...)
- *      If left can't decelerate to target_exit (minReachableSpeed > target),
+ *      v_cap = min(v_left_nominal, right_nominal, vmax_junction[left_end],
+ *                  v_right_entry_max)
+ *      v_target_exit = maxReachableSpeed(v_left_entry, dist_left, v_cap, ...)
+ *      If left can't decelerate to v_target_exit (minReachableSpeed > target),
  *      trigger the can't-brake fallback (see Cross-cycle guarantees).
  *
  *   4. Plan the left trajectory via plan_full(). If infeasible (returns
@@ -170,27 +170,27 @@
  *   LEFT side (plus any newly arrived blocks appended to the tail).
  *
  *   Stored between cycles:
- *     last_right_exit     = max_safe_entry[block_count] — the speed at the
+ *     v_last_right_exit     = max_safe_entry[block_count] — the speed at the
  *                           far end of the visible buffer (typically 0,
  *                           since the backward pass assumes full stop).
- *     last_right_decel_mm = distance the right side needs to decel from
- *                           the emitted target_exit down to last_right_exit.
+ *     dist_last_right_decel = distance the right side needs to decel from
+ *                           the emitted target_exit down to v_last_right_exit.
  *
  *   These are stored because the right side's blocks will form the next
  *   cycle's left. If the next cycle can't brake to its new target_exit,
- *   it can instead decel to last_right_exit — a speed we know the tail
+ *   it can instead decel to v_last_right_exit — a speed we know the tail
  *   can handle because backward-monotone guarantees that adding blocks
  *   to the tail only raises (or preserves) safe entry speeds.
  *
- *   Can't-brake fallback (when minReachableSpeed > target_exit):
- *   1. If last_right_decel_mm > 0 and last_right_exit < left_entry_speed:
- *      expand left to cover the decel ramp, decel to last_right_exit,
+ *   Can't-brake fallback (when minReachableSpeed > v_target_exit):
+ *   1. If dist_last_right_decel > 0 and v_last_right_exit < v_left_entry:
+ *      expand left to cover the decel ramp, decel to v_last_right_exit,
  *      then cruise. If expansion runs out of blocks, fall back to
  *      minReachableSpeed over the expanded left.
  *   2. Otherwise: use minReachableSpeed (best achievable exit speed).
  *   Both paths break immediately (skip junction check).
  *   Safe because backward-monotone: the new tail (with more blocks
- *   appended since last cycle) can handle last_right_exit.
+ *   appended since last cycle) can handle v_last_right_exit.
  */
 
 /**
@@ -199,15 +199,15 @@
  * - ceiling < max(v_entry, v_exit) → true (boundary already exceeds)
  * - otherwise: true iff ramp to ceiling fits in dist (peak goes higher)
  */
-static bool peakExceedsCeiling(float v_entry, float v_exit, float a_max_val,
-                                float j_max_val, float dist, float v_nominal,
-                                float ceiling) {
-  if (ceiling >= v_nominal) return false;
+static bool peakExceedsCeiling(float v_entry, float v_exit, float a_max,
+                                float j_max, float dist_total, float v_nominal,
+                                float v_ceiling) {
+  if (v_ceiling >= v_nominal) return false;
   const float v_small = _MIN(v_entry, v_exit);
   const float v_large = _MAX(v_entry, v_exit);
-  if (ceiling < v_large) return true;
-  return cj_rampDist(v_small, ceiling, j_max_val, a_max_val)
-       + cj_rampDist(v_large, ceiling, j_max_val, a_max_val) < dist;
+  if (v_ceiling < v_large) return true;
+  return cj_rampDist(v_small, v_ceiling, j_max, a_max)
+       + cj_rampDist(v_large, v_ceiling, j_max, a_max) < dist_total;
 }
 
 static float sumDist(const float* mm_arr,  uint8_t from, uint8_t to) {
@@ -229,8 +229,8 @@ class ConstantJerkBlockPlanner {
  public:
   void reset() {
     orig_block_index = 0;
-    last_right_exit = 0;
-    last_right_decel_mm = 0;
+    v_last_right_exit = 0;
+    dist_last_right_decel = 0;
     cant_brake_count = 0;
     traj.reset();
   }
@@ -244,7 +244,7 @@ class ConstantJerkBlockPlanner {
    *
    * Returns true if a trajectory is ready for execution.
    */
-  bool planNext(const float jerk_max) {
+  bool planNext(const float j_max) {
     float mm[BLOCK_BUFFER_SIZE];
     float nominal[BLOCK_BUFFER_SIZE];
     float accel[BLOCK_BUFFER_SIZE];
@@ -282,17 +282,17 @@ class ConstantJerkBlockPlanner {
     float max_safe_entry[BLOCK_BUFFER_SIZE + 1];
     max_safe_entry[block_count] = 0.0f;
     for (int8_t i = block_count - 1; i > 0; i--) {
-      max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], jerk_max);
+      max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], j_max);
     }
-    float left_entry_speed = traj.getExitSpeed();
-    if (left_entry_speed == 0) {
+    float v_left_entry = traj.getExitSpeed();
+    if (v_left_entry == 0) {
       // Starting from rest: no previous cycle to honor.
       // TODO: handle this more cleanly — this happens when the trajectory
       // generator was reset externally (e.g. by ft_motion on idle/error).
       // Ideally the planner would detect the reset via a flag rather than
       // inferring it from exit speed being zero.
-      last_right_exit = 0;
-      last_right_decel_mm = 0;
+      v_last_right_exit = 0;
+      dist_last_right_decel = 0;
     }
 
     // Left-compatible group: find max extent with same nominal and accel ratio ≤ 1.1.
@@ -313,132 +313,132 @@ class ConstantJerkBlockPlanner {
 
     // New merge algorithm: split-in-middle, right-decel-first.
     // Right side = ALL remaining blocks [left_end..block_count), modeled as pure decel.
-    float left_exit_speed;
+    float v_left_exit;
 
     while (true) {
-      // Step 2: Compute max_right_entry via decel analysis
-      float max_right_entry_v = 0;
+      // Step 2: Compute v_right_entry_max via decel analysis
+      float v_right_entry_max = 0;
       if (left_end < block_count) {
-        float right_a = minVal(accel, left_end, block_count);
-        max_right_entry_v = maxDecelEntry(mm, vmax_junction,
+        float a_right = minVal(accel, left_end, block_count);
+        v_right_entry_max = maxDecelEntry(mm, vmax_junction,
                                            left_end, block_count,
                                            max_safe_entry[block_count],
-                                           right_a, jerk_max);
+                                           a_right, j_max);
       }
 
       // Step 3: Plan left
-      float left_mm = sumDist(mm, 0, left_end);
-      float left_a = minVal(accel, 0, left_end);
-      float left_nominal = nominal[0];
+      float dist_left = sumDist(mm, 0, left_end);
+      float a_left = minVal(accel, 0, left_end);
+      float v_left_nominal = nominal[0];
       float v_cap = left_end < block_count
-        ? _MIN(left_nominal, _MIN(nominal[left_end], _MIN(vmax_junction[left_end], max_right_entry_v)))
+        ? _MIN(v_left_nominal, _MIN(nominal[left_end], _MIN(vmax_junction[left_end], v_right_entry_max)))
         : max_safe_entry[block_count];  // no right side: exit = safe entry at end
-      float target_exit = maxReachableSpeed(left_entry_speed, left_mm, v_cap, left_a, jerk_max);
+      float v_target_exit = maxReachableSpeed(v_left_entry, dist_left, v_cap, a_left, j_max);
 
       // ─── "Can't brake" fallback ───
       //
-      // Left can't decelerate to target_exit within left_mm.
-      // Strategy: decel to last_right_exit instead — a speed we know the
+      // Left can't decelerate to v_target_exit within dist_left.
+      // Strategy: decel to v_last_right_exit instead — a speed we know the
       // tail can handle because the previous cycle's right side (now our
       // left) was proven safe down to that speed, and backward-monotone
       // guarantees the new (longer) tail is at least as permissive.
       //
       // We expand left to cover the decel ramp distance, then cruise at
-      // last_right_exit for any remaining distance. Both can't-brake paths
+      // v_last_right_exit for any remaining distance. Both can't-brake paths
       // break immediately (skip junction check) to avoid cascade.
       // If expansion runs out of blocks, fall back to minReachableSpeed.
-      if (target_exit < left_entry_speed) {
-        float min_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
-        if (min_exit > target_exit) {
+      if (v_target_exit < v_left_entry) {
+        float v_min_exit = minReachableSpeed(v_left_entry, dist_left, a_left, j_max);
+        if (v_min_exit > v_target_exit) {
           cant_brake_count++;
-          // Try decel-then-cruise to last_right_exit if it's a valid
+          // Try decel-then-cruise to v_last_right_exit if it's a valid
           // decel target (below entry speed).
-          if (last_right_decel_mm > 0 && last_right_exit < left_entry_speed) {
+          if (dist_last_right_decel > 0 && v_last_right_exit < v_left_entry) {
             // Expand left to cover the decel ramp distance, recomputing
             // with actual block accels as we go.
-            float cum = 0;
-            float cur_a = accel[0];
+            float dist_cum = 0;
+            float a_cur = accel[0];
             left_end = 0;
             for (uint8_t k = 0; k < block_count; k++) {
-              cum += mm[k];
-              cur_a = _MIN(cur_a, accel[k]);
+              dist_cum += mm[k];
+              a_cur = _MIN(a_cur, accel[k]);
               left_end = k + 1;
-              float needed = cj_rampDist(last_right_exit, left_entry_speed, jerk_max, cur_a);
-              if (cum >= needed) break;
+              float dist_needed = cj_rampDist(v_last_right_exit, v_left_entry, j_max, a_cur);
+              if (dist_cum >= dist_needed) break;
             }
-            left_mm = sumDist(mm, 0, left_end);
-            left_a = minVal(accel, 0, left_end);
+            dist_left = sumDist(mm, 0, left_end);
+            a_left = minVal(accel, 0, left_end);
             // Verify the decel ramp fits in the expanded distance.
             // If the expansion exhausted all blocks without enough distance,
             // fall back to minReachableSpeed over the expanded left.
-            float decel_needed = cj_rampDist(last_right_exit, left_entry_speed, jerk_max, left_a);
-            if (left_mm < decel_needed) {
-              target_exit = minReachableSpeed(left_entry_speed, left_mm, left_a, jerk_max);
+            float dist_decel_needed = cj_rampDist(v_last_right_exit, v_left_entry, j_max, a_left);
+            if (dist_left < dist_decel_needed) {
+              v_target_exit = minReachableSpeed(v_left_entry, dist_left, a_left, j_max);
             } else {
-              target_exit = last_right_exit;
+              v_target_exit = v_last_right_exit;
             }
-            // Nominal must be >= left_entry_speed so plan_full's peak
-            // can reach entry speed (v_peak >= max(v0,v1)).
-            float plan_jerk = jerk_max;
-            float plan_nominal = _MAX(left_entry_speed, target_exit);
-            bool ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, plan_nominal);
+            // Nominal must be >= v_left_entry so plan_full's peak
+            // can reach entry speed (v_peak >= max(v_entry,v_exit)).
+            float j_plan = j_max;
+            float v_plan_nominal = _MAX(v_left_entry, v_target_exit);
+            bool ok = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_plan_nominal);
             if (!ok) {
               for (int retry = 0; retry < 5 && !ok; retry++) {
-                plan_jerk *= 1.1f;
-                ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, plan_nominal);
+                j_plan *= 1.1f;
+                ok = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_plan_nominal);
               }
             }
-            left_exit_speed = target_exit;
-            storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
+            v_left_exit = v_target_exit;
+            storeKnownRight(accel, left_end, block_count, v_target_exit, max_safe_entry, j_max);
             break;
           }
           // No valid decel-then-cruise target. Use best achievable exit speed
           // and break immediately to prevent junction check cascade.
-          target_exit = min_exit;
-          float plan_jerk = jerk_max;
-          bool ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, left_nominal);
+          v_target_exit = v_min_exit;
+          float j_plan = j_max;
+          bool ok = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_left_nominal);
           if (!ok) {
             for (int retry = 0; retry < 5 && !ok; retry++) {
-              plan_jerk *= 1.1f;
-              ok = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, left_nominal);
+              j_plan *= 1.1f;
+              ok = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_left_nominal);
             }
           }
-          left_exit_speed = target_exit;
-          storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
+          v_left_exit = v_target_exit;
+          storeKnownRight(accel, left_end, block_count, v_target_exit, max_safe_entry, j_max);
           break;
         }
       }
 
       // Step 4: Plan and check feasibility + left interior junctions
       // If infeasible due to numerical precision at ramp boundaries, inflate jerk slightly
-      float plan_jerk = jerk_max;
-      bool feasible = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, left_nominal);
+      float j_plan = j_max;
+      bool feasible = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_left_nominal);
       if (!feasible) {
         // Borderline infeasible — inflate jerk to make ramp fit (numerical tolerance)
         for (int retry = 0; retry < 5 && !feasible; retry++) {
-          plan_jerk *= 1.1f;
-          feasible = traj.plan_full(left_entry_speed, target_exit, left_a, plan_jerk, left_mm, left_nominal);
+          j_plan *= 1.1f;
+          feasible = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_left_nominal);
         }
-        left_exit_speed = target_exit;
-        storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
+        v_left_exit = v_target_exit;
+        storeKnownRight(accel, left_end, block_count, v_target_exit, max_safe_entry, j_max);
         break;
       }
 
       if (left_end > 1) {
         uint8_t rightmost_violation = 0;
-        float cum_d = 0;
-        for (uint8_t k = 0; k + 1 < left_end; k++) cum_d += mm[k];
+        float dist_cum = 0;
+        for (uint8_t k = 0; k + 1 < left_end; k++) dist_cum += mm[k];
         // Scan right to left for junction violations
         for (uint8_t k = left_end - 1; k >= 1; k--) {
-          float v_at_k = traj.getVelocityAtDistance(cum_d);
+          float v_at_junction = traj.getVelocityAtDistance(dist_cum);
           // Tolerance: peakExceedsCeiling in old algorithm was less precise,
           // allowing small overshoots. Use relative tolerance (3%) or 1mm/s min.
           const float tol = _MAX(1.0f, vmax_junction[k] * 0.03f);
-          if (v_at_k > vmax_junction[k] + tol) {
+          if (v_at_junction > vmax_junction[k] + tol) {
             rightmost_violation = k;
             break;
           }
-          cum_d -= mm[k - 1];
+          dist_cum -= mm[k - 1];
         }
         if (rightmost_violation > 0) {
           left_end = rightmost_violation;
@@ -447,8 +447,8 @@ class ConstantJerkBlockPlanner {
       }
 
       // Success
-      left_exit_speed = target_exit;
-      storeKnownRight(accel, left_end, block_count, target_exit, max_safe_entry, jerk_max);
+      v_left_exit = v_target_exit;
+      storeKnownRight(accel, left_end, block_count, v_target_exit, max_safe_entry, j_max);
       break;
     }
 
@@ -492,61 +492,61 @@ class ConstantJerkBlockPlanner {
 
  private:
   /**
-   * Max speed reachable from v_from over total_mm via jerk-limited ramp,
+   * Max speed reachable from v_from over dist_total via jerk-limited ramp,
    * capped by v_max. Newton's method on closed-form cj_rampDist.
    * When v_from > v_max, returns v_max (hard ceiling).
-   * Monotone in total_mm: more distance → higher or equal result.
+   * Monotone in dist_total: more distance → higher or equal result.
    */
-  float maxReachableSpeed(float v_from, float total_mm,
-                          float v_max, float a_max_val, float j_max_val) {
-    float v_trap = SQRT(v_from * v_from + 2.0f * a_max_val * total_mm);
+  float maxReachableSpeed(float v_from, float dist_total,
+                          float v_max, float a_max, float j_max) {
+    float v_trap = SQRT(v_from * v_from + 2.0f * a_max * dist_total);
     float hi = _MIN(v_max, v_trap);
 
     if (hi <= v_from) return hi;
-    if (cj_rampDist(v_from, hi, j_max_val, a_max_val) <= total_mm) return hi;
+    if (cj_rampDist(v_from, hi, j_max, a_max) <= dist_total) return hi;
 
     // Initial guess: trapezoidal quadratic inverse
     //   dv² + B*dv + C = 0  where B = 2*v + am²/j, C = 2*v*am²/j - 2*s*am
-    const float am2j = a_max_val * a_max_val / j_max_val;
+    const float am2j = a_max * a_max / j_max;
     const float B = 2.0f * v_from + am2j;
-    const float C = 2.0f * v_from * am2j - 2.0f * total_mm * a_max_val;
+    const float C = 2.0f * v_from * am2j - 2.0f * dist_total * a_max;
     const float disc = B * B - 4.0f * C;
-    float vp;
+    float v_peak;
     if (disc >= 0.0f) {
       const float dv = (-B + SQRT(disc)) * 0.5f;
-      vp = (dv > 0.0f) ? _MIN(v_from + dv, hi) : hi;
+      v_peak = (dv > 0.0f) ? _MIN(v_from + dv, hi) : hi;
     } else {
-      vp = hi;
+      v_peak = hi;
     }
 
-    // Newton: f(vp) = cj_rampDist(v_from, vp) - total_mm = 0
+    // Newton: f(v_peak) = cj_rampDist(v_from, v_peak) - dist_total = 0
     for (int i = 0; i < 10; i++) {
-      if (vp <= v_from) { vp = v_from + 0.001f; }
-      const float f = cj_rampDist(v_from, vp, j_max_val, a_max_val) - total_mm;
-      const float fp = cj_rampDistDeriv(v_from, vp, j_max_val, a_max_val);
+      if (v_peak <= v_from) { v_peak = v_from + 0.001f; }
+      const float f = cj_rampDist(v_from, v_peak, j_max, a_max) - dist_total;
+      const float fp = cj_rampDistDeriv(v_from, v_peak, j_max, a_max);
       if (fp < 1e-10f) break;
       const float step = f / fp;
-      vp -= step;
-      if (vp < v_from) vp = v_from;
-      if (vp > hi) vp = hi;
+      v_peak -= step;
+      if (v_peak < v_from) v_peak = v_from;
+      if (v_peak > hi) v_peak = hi;
       if (f <= 0.0f && f > -0.01f) break; // close enough, conservative
       if (step < 0.001f && step > -0.001f) break;
     }
     // Guarantee: returned speed is conservative (ramp fits in distance).
     // Newton may converge slightly above the root; bisect down if needed.
-    vp = _MIN(vp, hi);
-    if (vp > v_from && cj_rampDist(v_from, vp, j_max_val, a_max_val) > total_mm) {
-      float lo_v = v_from, hi_v = vp;
+    v_peak = _MIN(v_peak, hi);
+    if (v_peak > v_from && cj_rampDist(v_from, v_peak, j_max, a_max) > dist_total) {
+      float v_lo = v_from, v_hi = v_peak;
       for (int i = 0; i < 10; i++) {
-        float mid = 0.5f * (lo_v + hi_v);
-        if (cj_rampDist(v_from, mid, j_max_val, a_max_val) <= total_mm)
-          lo_v = mid;
+        float mid = 0.5f * (v_lo + v_hi);
+        if (cj_rampDist(v_from, mid, j_max, a_max) <= dist_total)
+          v_lo = mid;
         else
-          hi_v = mid;
+          v_hi = mid;
       }
-      vp = lo_v;
+      v_peak = v_lo;
     }
-    return vp;
+    return v_peak;
   }
 
   /** Store right-side state for the next cycle's can't-brake fallback.
@@ -554,27 +554,27 @@ class ConstantJerkBlockPlanner {
    *  This cycle's right blocks [left_end..block_count) will become the
    *  start of the next cycle's visible window. We store:
    *
-   *  last_right_exit     = max_safe_entry[block_count] — the speed at the
+   *  v_last_right_exit       = max_safe_entry[block_count] — the speed at the
    *    end of the current buffer (typically 0: backward pass assumes stop).
-   *  last_right_decel_mm = distance to decel from this cycle's emitted
-   *    exit speed (target_exit) down to last_right_exit.
+   *  dist_last_right_decel   = distance to decel from this cycle's emitted
+   *    exit speed (v_target_exit) down to v_last_right_exit.
    *
    *  If the next cycle can't brake to its computed target, it can instead
-   *  decel to last_right_exit (a known-safe speed), then cruise. This works
+   *  decel to v_last_right_exit (a known-safe speed), then cruise. This works
    *  because backward-monotone guarantees: the new tail (old right + new
    *  blocks) can handle any speed the old tail could handle.
    */
   void storeKnownRight(const float* accel_arr,
                        uint8_t left_end, uint8_t block_count,
-                       float target_exit, const float* max_safe_entry,
-                       float jerk_max) {
+                       float v_target_exit, const float* max_safe_entry,
+                       float j_max) {
     if (left_end < block_count) {
-      last_right_exit = max_safe_entry[block_count];
-      float right_a = minVal(accel_arr, left_end, block_count);
-      last_right_decel_mm = cj_rampDist(last_right_exit, target_exit, jerk_max, right_a);
+      v_last_right_exit = max_safe_entry[block_count];
+      float a_right = minVal(accel_arr, left_end, block_count);
+      dist_last_right_decel = cj_rampDist(v_last_right_exit, v_target_exit, j_max, a_right);
     } else {
-      last_right_exit = 0;
-      last_right_decel_mm = 0;
+      v_last_right_exit = 0;
+      dist_last_right_decel = 0;
     }
   }
 
@@ -582,75 +582,75 @@ class ConstantJerkBlockPlanner {
    * Max entry speed for a pure decel ramp over blocks [from..to),
    * decelerating to v_exit, respecting all interior junction ceilings.
    */
-  float maxDecelEntry(const float* mm_arr, const float* vjunction,
+  float maxDecelEntry(const float* mm_arr, const float* v_junction,
                       uint8_t from, uint8_t to, float v_exit,
-                      float a_max_val, float j_max_val) {
-    float total_dist = sumDist(mm_arr, from, to);
-    float V = maxReachableSpeed(v_exit, total_dist, 1e10f, a_max_val, j_max_val);
-    V = _MIN(V, vjunction[from]);
+                      float a_max, float j_max) {
+    float dist_total = sumDist(mm_arr, from, to);
+    float v_entry = maxReachableSpeed(v_exit, dist_total, 1e10f, a_max, j_max);
+    v_entry = _MIN(v_entry, v_junction[from]);
 
-    if (V <= v_exit) return V;
+    if (v_entry <= v_exit) return v_entry;
 
     // Compute 3-phase decel ramp phase boundaries
-    float ta, tb, tc;
-    float _s_endA, _v_endA, _s_endB, _v_endB, _total_ramp_dist;
+    float dt_jerk1, dt_hold, dt_jerk2;
+    float dist_endA, v_endA, dist_endB, v_endB, dist_ramp_total;
     auto recomputeRamp = [&]() {
-      cj_planRamp(v_exit, V, j_max_val, a_max_val, true, ta, tb, tc);
-      float v_s = V, a_s = 0.0f, s_s = 0.0f;
-      cj_simulatePhase(-j_max_val, ta, v_s, a_s, s_s);
-      _s_endA = s_s; _v_endA = v_s;
-      cj_simulatePhase(0, tb, v_s, a_s, s_s);
-      _s_endB = s_s; _v_endB = v_s;
-      cj_simulatePhase(j_max_val, tc, v_s, a_s, s_s);
-      _total_ramp_dist = s_s;
+      cj_planRamp(v_exit, v_entry, j_max, a_max, true, dt_jerk1, dt_hold, dt_jerk2);
+      float v_cur = v_entry, a_cur = 0.0f, dist_cur = 0.0f;
+      cj_simulatePhase(-j_max, dt_jerk1, v_cur, a_cur, dist_cur);
+      dist_endA = dist_cur; v_endA = v_cur;
+      cj_simulatePhase(0, dt_hold, v_cur, a_cur, dist_cur);
+      dist_endB = dist_cur; v_endB = v_cur;
+      cj_simulatePhase(j_max, dt_jerk2, v_cur, a_cur, dist_cur);
+      dist_ramp_total = dist_cur;
     };
     recomputeRamp();
 
-    float cum_d = 0;
+    float dist_cum = 0;
     for (uint8_t k = from; k + 1 < to; k++) {
-      cum_d += mm_arr[k];
-      const float ceiling_k = vjunction[k + 1];
-      if (ceiling_k >= V) continue;
-      if (ceiling_k <= v_exit) { V = ceiling_k; break; }
-      const float s_at_ceiling = cj_decelRampDistAtVelocity(
-        V, v_exit, ceiling_k, j_max_val, a_max_val,
-        _s_endA, _v_endA, _s_endB, _v_endB, _total_ramp_dist);
-      if (s_at_ceiling > cum_d) {
-        V = ceiling_k;
-        if (V <= v_exit) break;
+      dist_cum += mm_arr[k];
+      const float v_ceiling = v_junction[k + 1];
+      if (v_ceiling >= v_entry) continue;
+      if (v_ceiling <= v_exit) { v_entry = v_ceiling; break; }
+      const float dist_at_ceiling = cj_decelRampDistAtVelocity(
+        v_entry, v_exit, v_ceiling, j_max, a_max,
+        dist_endA, v_endA, dist_endB, v_endB, dist_ramp_total);
+      if (dist_at_ceiling > dist_cum) {
+        v_entry = v_ceiling;
+        if (v_entry <= v_exit) break;
         recomputeRamp();
       }
     }
-    return V;
+    return v_entry;
   }
 
   ConstantJerkTrajectoryGenerator traj;
   uint8_t orig_block_index = 0;
   uint8_t group_block_count = 0;
   uint8_t group_buffer_consumed = 0;
-  float last_right_exit = 0;        // speed at end of last cycle's buffer (right becomes next left)
-  float last_right_decel_mm = 0;    // distance last right needed to decel from emitted exit to last_right_exit
+  float v_last_right_exit = 0;          // speed at end of last cycle's buffer (right becomes next left)
+  float dist_last_right_decel = 0;     // distance last right needed to decel from emitted exit to v_last_right_exit
   uint16_t cant_brake_count = 0;    // diagnostic: how many times the can't-brake fallback triggered
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 
   /**
-   * Min speed reachable by decelerating from v_from over total_mm.
-   * If the decel ramp from v_from to 0 fits in total_mm, returns 0.
+   * Min speed reachable by decelerating from v_from over dist_total.
+   * If the decel ramp from v_from to 0 fits in dist_total, returns 0.
    * Otherwise binary search on cj_rampDist (O(1) per iteration).
    * Returns hi (slight overestimate within 0.001 mm/s).
-   * Monotone decreasing in total_mm: more distance → lower result.
+   * Monotone decreasing in dist_total: more distance → lower result.
    */
-  float minReachableSpeed(float v_from, float total_mm,
-                          float a_max_val, float j_max_val) {
-    if (v_from <= 0.0f || total_mm <= 0.0f) return v_from;
+  float minReachableSpeed(float v_from, float dist_total,
+                          float a_max, float j_max) {
+    if (v_from <= 0.0f || dist_total <= 0.0f) return v_from;
 
-    if (cj_rampDist(0, v_from, j_max_val, a_max_val) <= total_mm) return 0;
+    if (cj_rampDist(0, v_from, j_max, a_max) <= dist_total) return 0;
 
     float lo = 0, hi = v_from;
     for (int i = 0; i < 32; i++) {
       float mid = 0.5f * (lo + hi);
-      if (cj_rampDist(mid, v_from, j_max_val, a_max_val) <= total_mm)
+      if (cj_rampDist(mid, v_from, j_max, a_max) <= dist_total)
         hi = mid;
       else
         lo = mid;
