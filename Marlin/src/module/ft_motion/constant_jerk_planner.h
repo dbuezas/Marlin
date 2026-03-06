@@ -361,27 +361,55 @@ class ConstantJerkBlockPlanner {
       // ─── "Can't brake" fallback ───
       //
       // Left can't decelerate to v_target_exit within dist_left.
-      // Strategy: decel to v_last_right_exit, then cruise.
+      //
+      // Root cause: the right side models deceleration as a single merged ramp
+      // (cj_rampDist over total right distance). But when those blocks are
+      // actually planned in the next cycle, they're handled per-block with
+      // a=0 at each boundary, which is less efficient. The merged ramp
+      // over-promises the achievable exit speed.
+      //
+      // Current workaround: expand left to cover dist_last_right_decel,
+      // plan cruise-at-entry then decel to v_last_right_exit. This works
+      // but the cruise portion may violate interior junction limits within
+      // the expanded group.
+      //
+      // ─── Planned fix: mid-block decel with head_block_offset ───
+      //
+      // Instead of expanding and cruising at entry speed:
+      //
+      // 1. Plan a pure decel from v_left_entry to v_last_right_exit.
+      //    The decel distance = cj_rampDist(v_last_right_exit, v_left_entry,
+      //    j_max, a_left). This lands mid-block at v_last_right_exit with a=0.
+      //
+      // 2. Consume all whole blocks before the landing point. Set
+      //    head_block_offset = distance consumed within the landing block.
+      //    The next planNext() call subtracts head_block_offset from
+      //    mm[0], planning only the remaining distance of that block.
+      //
+      // 3. The landing block's vmax_junction doesn't apply (we're mid-block,
+      //    no physical junction). Override it to v_last_right_exit when
+      //    reading the block with an offset.
+      //
+      // 4. When the landing block is fully consumed, reset head_block_offset=0.
+      //
+      // Why this is safe:
+      //   - v_last_right_exit was validated by the previous cycle's backward
+      //     pass (max_safe_entry[right_end]), so the tail can handle it.
+      //   - Interior junctions during the decel: the expanded blocks were
+      //     part of the original left group (validated by merge against
+      //     v_peak = v_left_entry), so their junction limits >= v_left_entry.
+      //     The decel passes through at <= v_left_entry. Safe.
+      //   - No cruise at entry speed, so no junction violations.
+      //   - No suboptimal slow cruise through long blocks.
+      //
+      // Requires: new member `float head_block_offset = 0` and adjustment
+      // in the block gathering loop: `mm[0] -= head_block_offset`.
+      // Also requires refactoring ft_motion block consumption to not
+      // treat CJ trajectories specially (see ft_motion.cpp TODO).
       //
       // Key invariant: can't-brake requires v_left_entry > 0 (from rest,
       // minReachableSpeed is always 0 ≤ any target). v_left_entry > 0 means
       // a previous cycle ran and stored v_last_right_exit and dist_last_right_decel.
-      // v_last_right_exit = max_safe_entry[right_end] from the previous cycle
-      // (the safe speed at the end of the right group, typically low).
-      // Since v_left_entry > 0 and v_last_right_exit is bounded by the backward
-      // pass, we always have:
-      //   - v_last_right_exit < v_left_entry  (valid decel target)
-      //   - dist_last_right_decel > 0         (nonzero ramp distance)
-      //
-      // ─── "Can't brake" fallback: decel to v_last_right_exit, then cruise ───
-      //
-      // dist_last_right_decel (stored from the previous cycle) is the distance
-      // needed to decel from v_left_entry to v_last_right_exit, computed with
-      // a_right_prev. Since a_left over the subset of those same blocks is
-      // >= a_right_prev (min over superset), the actual ramp fits in equal or
-      // less distance — so expansion is guaranteed to succeed.
-      // Using the stored distance is slightly conservative (may include one
-      // extra block), which just adds cruise distance at v_last_right_exit.
       if (v_target_exit < v_left_entry) {
         float v_min_exit = minReachableSpeed(v_left_entry, dist_left, a_left, j_max);
         if (v_min_exit > v_target_exit) {
@@ -399,38 +427,16 @@ class ConstantJerkBlockPlanner {
           a_left = minVal(accel, 0, left_end);
           v_target_exit = v_last_right_exit;
 
-          // TODO: plan_full with nominal=v_left_entry produces cruise-at-entry
-          // then decel. The cruise portion may violate interior junction limits
-          // within the expanded left (at most one block of overshoot). Ideally
-          // we'd plan decel-then-cruise-at-exit, but plan_full's 7-phase model
-          // cruises at peak (highest) speed, so nominal < v_entry is unsupported.
           float j_plan = j_max;
           float v_plan_nominal = _MAX(v_left_entry, v_target_exit);
           bool ok = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_plan_nominal);
           if (!ok) {
-            // Should not happen: dist_left >= decel ramp and nominal >= entry.
-            // Jerk inflation as numerical safety net.
             SERIAL_ECHOLNPGM("CJ WARN: can't-brake plan_full failed, inflating jerk",
                              " entry=", v_left_entry, " exit=", v_target_exit,
                              " dist=", dist_left, " a=", a_left, " j=", j_max);
             for (int retry = 0; retry < 5 && !ok; retry++) {
               j_plan *= 1.1f;
               ok = traj.plan_full(v_left_entry, v_target_exit, a_left, j_plan, dist_left, v_plan_nominal);
-            }
-          }
-          // Check for junction violations in the expanded left.
-          // cruise-at-entry then decel may overshoot interior junctions.
-          if (left_end > 1) {
-            float dist_chk = 0;
-            for (uint8_t k = 0; k + 1 < left_end; k++) dist_chk += mm[k];
-            for (uint8_t k = left_end - 1; k >= 1; k--) {
-              float v_at = traj.getVelocityAtDistance(dist_chk);
-              if (v_at > vmax_junction[k] + _MAX(1.0f, vmax_junction[k] * 0.03f)) {
-                SERIAL_ECHOLNPGM("CJ WARN: can't-brake junction violation at block ", k,
-                                 " v=", v_at, " limit=", vmax_junction[k],
-                                 " entry=", v_left_entry, " exit=", v_target_exit);
-              }
-              dist_chk -= mm[k - 1];
             }
           }
 

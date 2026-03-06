@@ -677,6 +677,18 @@ void FTMotion::fill_stepper_plan_buffer() {
     #if ENABLED(FTM_CONSTANT_JERK)
       // For merged constant-jerk blocks, check if we've crossed into the next
       // original block. If so, release the old block and update ratio/startPos.
+      //
+      // TODO: Refactor block consumption so CJ doesn't need special handling.
+      // Currently, CJ merges N blocks into one trajectory and must manually
+      // track sub-block boundaries (checkBlockBoundary/advanceBlock/localDistance)
+      // to release blocks mid-trajectory. The normal path consumes one block
+      // per plan_next_block() call.
+      //
+      // Proposed unification: make plan_next_block() consume all N blocks
+      // upfront (advancing the planner buffer by bufferConsumed()), and track
+      // per-block position/ratio internally without mid-trajectory releases.
+      // This would also simplify the planned head_block_offset feature for
+      // the can't-brake fix (see constant_jerk_planner.h).
       if (trajectoryType == TrajectoryType::CONSTANT_JERK) {
         while (cjPlanner.checkBlockBoundary(dist)) {
           // Release the consumed original block
