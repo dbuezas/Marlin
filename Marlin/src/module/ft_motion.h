@@ -32,7 +32,6 @@
 #endif
 #if ENABLED(FTM_CONSTANT_JERK)
   #include "ft_motion/trajectory_constant_jerk.h"
-  #include "ft_motion/constant_jerk_planner.h"
 #endif
 #if ENABLED(FTM_RESONANCE_TEST)
   #include "ft_motion/resonance_generator.h"
@@ -265,7 +264,7 @@ class FTMotion {
     static bool busy;
 
     #if ENABLED(FTM_CONSTANT_JERK)
-      static ConstantJerkBlockPlanner cjPlanner;
+      static ConstantJerkTrajectoryGenerator cjGenerator;
     #endif
 
     static void set_defaults() {

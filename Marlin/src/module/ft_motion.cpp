@@ -87,7 +87,7 @@ TrapezoidalTrajectoryGenerator FTMotion::trapezoidalGenerator;
   Poly6TrajectoryGenerator FTMotion::poly6Generator;
 #endif
 #if ENABLED(FTM_CONSTANT_JERK)
-  ConstantJerkBlockPlanner FTMotion::cjPlanner;
+  ConstantJerkTrajectoryGenerator FTMotion::cjGenerator;
 #endif
 #if HAS_FTM_TRAJECTORY_SELECTION
   TrajectoryType FTMotion::trajectoryType = TrajectoryType::FTM_TRAJECTORY_TYPE;
@@ -329,7 +329,8 @@ void FTMotion::init() {
       #endif
       #if ENABLED(FTM_CONSTANT_JERK)
         case TrajectoryType::CONSTANT_JERK:
-          // CJ planner sets currentGenerator per-block in plan_next_block()
+          cjGenerator.setJerkMaxPtr(&cfg.jerk_max);
+          currentGenerator = &cjGenerator;
           break;
       #endif
     }
@@ -430,22 +431,9 @@ bool FTMotion::plan_next_block() {
     const ext_distance_t &moveDist = current_block->ext_distance_mm;
     ratio = moveDist / totalLength;
 
-    #if ENABLED(FTM_CONSTANT_JERK)
-      if (trajectoryType == TrajectoryType::CONSTANT_JERK) {
-        // CJ planner runs its own jerk-aware reverse/forward pass on all
-        // visible blocks, then plans a single or merged S-curve trajectory.
-        cjPlanner.planNext(cfg.jerk_max);
-        currentGenerator = &cjPlanner.trajectory();
-        endPos_prevBlock += moveDist;
-      }
-      else
-    #endif
-    {
-      // Plan the trajectory using the trajectory generator
-      currentGenerator->plan(current_block->entry_speed, current_block->exit_speed,
-                             current_block->acceleration, current_block->nominal_speed, totalLength);
-      endPos_prevBlock += moveDist;
-    }
+    currentGenerator->plan(current_block->entry_speed, current_block->exit_speed,
+                           current_block->acceleration, current_block->nominal_speed, totalLength);
+    endPos_prevBlock += moveDist;
 
     TERN_(FTM_HAS_LIN_ADVANCE, use_advance_lead = current_block->use_advance_lead);
 
@@ -674,42 +662,8 @@ void FTMotion::fill_stepper_plan_buffer() {
     // Get distance from trajectory generator
     float dist = currentGenerator->getDistanceAtTime(tau);
 
-    #if ENABLED(FTM_CONSTANT_JERK)
-      // For merged constant-jerk blocks, check if we've crossed into the next
-      // original block. If so, release the old block and update ratio/startPos.
-      //
-      // TODO: Refactor block consumption so CJ doesn't need special handling.
-      // Currently, CJ merges N blocks into one trajectory and must manually
-      // track sub-block boundaries (checkBlockBoundary/advanceBlock/localDistance)
-      // to release blocks mid-trajectory. The normal path consumes one block
-      // per plan_next_block() call.
-      //
-      // Proposed unification: make plan_next_block() consume all N blocks
-      // upfront (advancing the planner buffer by bufferConsumed()), and track
-      // per-block position/ratio internally without mid-trajectory releases.
-      // This would also simplify the planned head_block_offset feature for
-      // the can't-brake fix (see constant_jerk_planner.h).
-      if (trajectoryType == TrajectoryType::CONSTANT_JERK) {
-        while (cjPlanner.checkBlockBoundary(dist)) {
-          // Release the consumed original block
-          discard_planner_block_protected();
-          block_t * const next_block = planner.get_current_block();
-          if (!next_block) break;
-          stepper.current_block = next_block;
-          if (next_block->is_sync()) {
-            if (next_block->is_sync_pos()) stepper._set_position(next_block->position);
-          } else {
-            startPos = endPos_prevBlock;
-            endPos_prevBlock += next_block->ext_distance_mm;
-            ratio = next_block->ext_distance_mm / next_block->millimeters;
-            cjPlanner.advanceBlock(next_block->millimeters);
-            TERN_(FTM_HAS_LIN_ADVANCE, use_advance_lead = next_block->use_advance_lead);
-          }
-        }
-        // Convert merged-trajectory distance to sub-block-local distance
-        dist = cjPlanner.localDistance(dist);
-      }
-    #endif
+    // No trajectory-type-specific handling needed here.
+    // CJ uses sub-block views so dist is already block-local.
 
     xyze_float_t traj_coords = calc_traj_point(dist);
     if (fastForwardUntilMotion && traj_coords == last_target_traj) {
