@@ -142,6 +142,39 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
                               nominal[0], a_left_entry);
     if (!ok) return -1;
 
+    // Check velocity at block 0 exit (the truncation point).
+    // S-curve decel to v>0 can take MORE distance than to v=0, so plan_full
+    // may truncate internally and exit faster than v_target.
+    if (block_count > 1) {
+      float v_at_block0 = (candidate > 1) ? traj.getVelocityAtDistance(mm[0])
+                                            : traj.getVelocityAtTime(traj.getTotalDuration());
+      float v_limit_block1 = _MIN(nominal[0], vmax_junction[1]);
+      if (buffer_full) v_limit_block1 = _MIN(v_limit_block1, max_safe_entry[1]);
+      #ifdef CJ_DEBUG
+        printf("    block0 exit check: v_at=%.4f v_limit=%.4f (vj=%.0f mse=%.2f buf_full=%d cand=%d) → %s\n",
+               v_at_block0, v_limit_block1, vmax_junction[1], max_safe_entry[1], buffer_full, candidate,
+               (v_at_block0 > v_limit_block1 + 0.01f) ? "REJECT" : "OK");
+      #endif
+      if (v_at_block0 > v_limit_block1 + 0.01f) {
+        if (candidate == 1) {
+          // Single block, decel can't reach target. Replan targeting v=0
+          // (full stop uses less distance), then truncate will produce the
+          // best achievable exit speed.
+          traj.plan_full(v_left_entry, 0.0f, a_left, j_max, dist_left,
+                          nominal[0], a_left_entry);
+          // Re-check: if even targeting 0 overshoots, accept it (best effort)
+          float v_recheck = traj.getVelocityAtTime(traj.getTotalDuration());
+          #ifdef CJ_DEBUG
+            printf("    replan v=0: exit=%.4f vs limit=%.4f\n", v_recheck, v_limit_block1);
+          #endif
+          if (v_recheck <= v_limit_block1 + 0.01f) return 0.0f;
+          // Still exceeds — this is the best we can do, accept it
+          return 0.0f;
+        }
+        return -1;
+      }
+    }
+
     // Check interior left junctions
     if (candidate > 1) {
       float dist_cum = 0;
