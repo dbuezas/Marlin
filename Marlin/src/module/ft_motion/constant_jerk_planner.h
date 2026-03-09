@@ -65,18 +65,16 @@
  *     max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i+1], mm[i],
  *                            min(nominal[i], vmax_junction[i]), accel[i], j_max)
  *
- *   Also used at block 0's exit to cap v_exit_stored, ensuring the
- *   next cycle can decelerate safely. This is conservative when a≠0
- *   at block boundaries (max_safe_entry assumes a=0).
- *
  * ─── Merge algorithm (largest feasible left_end) ───
  *
  *   1. Find left-compatible extent: same nominal, accel ratio ≤ 1.1.
  *   2. Try from largest left_end downward, take first feasible:
  *      a. v_junction = min(max_safe_entry[left_end], nominal, vmax_junction)
  *      b. Plan left S-curve toward v_junction
- *      c. Check interior junctions against vmax_junction[k]
- *   3. If left_end=0 (nothing feasible), use full_stop_fallback decel ramp.
+ *      c. Check velocity at block 0 exit against vmax_junction[1]
+ *      d. Check interior junctions against vmax_junction[k]
+ *   3. For candidate=1 if decel overshoots, replan targeting v=0
+ *      (full decel uses LESS distance than partial — S-curve asymmetry).
  *   4. Truncate trajectory to block 0, store (v, a) exit state.
  *
  *   Replanning each cycle from actual (v, a) compensates for the
