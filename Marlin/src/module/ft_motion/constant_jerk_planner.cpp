@@ -149,7 +149,6 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
       float v_at_block0 = (candidate > 1) ? traj.getVelocityAtDistance(mm[0])
                                             : traj.getVelocityAtTime(traj.getTotalDuration());
       float v_limit_block1 = _MIN(nominal[0], vmax_junction[1]);
-      if (buffer_full) v_limit_block1 = _MIN(v_limit_block1, max_safe_entry[1]);
       #ifdef CJ_DEBUG
         printf("    block0 exit check: v_at=%.4f v_limit=%.4f (vj=%.0f mse=%.2f buf_full=%d cand=%d) → %s\n",
                v_at_block0, v_limit_block1, vmax_junction[1], max_safe_entry[1], buffer_full, candidate,
