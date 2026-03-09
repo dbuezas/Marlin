@@ -86,6 +86,44 @@ static inline float cj_planRamp(float v_start, float v_peak, float j_max, float 
   return dist;
 }
 
+// Plan a 3-phase decel ramp from (v_start, a_start) to (v_end, 0).
+// Phases: [-j, 0, +j]. a_start <= 0 (already decelerating) or 0.
+// Returns distance consumed. Sets dt_jerk1 (phase4), dt_hold (phase5), dt_jerk2 (phase6).
+static inline float cj_planDecelRampWithA(
+    float v_start, float v_end, float j_max, float a_max,
+    float &dt_jerk1, float &dt_hold, float &dt_jerk2,
+    float a_start = 0.0f) {
+  const float dv = v_start - v_end;  // total velocity to shed
+  // a_peak² = (a_start² + 2·j·dv) / 2
+  float a_peak_sq = (a_start * a_start + 2.0f * j_max * dv) / 2.0f;
+  if (a_peak_sq < 0.0f) a_peak_sq = 0.0f;
+  float a_peak = SQRT(a_peak_sq);
+
+  if (a_peak <= a_max) {
+    // Triangular: no hold phase
+    dt_jerk1 = (a_start + a_peak) / j_max;
+    dt_hold = 0.0f;
+    dt_jerk2 = a_peak / j_max;
+  } else {
+    // Trapezoidal: a_peak clamped to a_max
+    a_peak = a_max;
+    dt_jerk1 = (a_start + a_max) / j_max;
+    dt_jerk2 = a_max / j_max;
+    float dv_no_hold = (a_start * a_start - 2.0f * a_max * a_max) / (2.0f * j_max);
+    float dv_hold = -dv - dv_no_hold;  // remaining dv for hold phase
+    dt_hold = _MAX(0.0f, -dv_hold / a_max);
+  }
+
+  if (dt_jerk1 < 0.0f) dt_jerk1 = 0.0f;
+
+  // Simulate to compute distance
+  float v = v_start, a = a_start, dist = 0.0f;
+  cj_simulatePhase(-j_max, dt_jerk1, v, a, dist);
+  cj_simulatePhase(0,      dt_hold,  v, a, dist);
+  cj_simulatePhase(j_max,  dt_jerk2, v, a, dist);
+  return dist;
+}
+
 // Symmetric total ramp distance
 static inline float cj_totalRampDist(float v_peak, float v_small, float v_large,
                                      float j_max, float a_max) {
@@ -265,9 +303,7 @@ public:
   // Plan a pure decel ramp from (v_entry, a_entry) to (v=0, a=0).
   // Uses only phases 4-6 [-j, 0, +j]; phases 0-3 are set to zero.
   // This is used by full_stop_fallback when continuing a deceleration that was
-  // already in progress (a_entry may be negative). Unlike plan_full, this does
-  // NOT decompose into accel+cruise+decel — it plans the 3 decel phases directly,
-  // correctly accounting for a_start on the decel side.
+  // already in progress (a_entry may be negative).
   void plan_decel_only(float v_entry_in, float a_max_in, float j_max_in,
                        float a_entry_in = 0.0f) {
     v_entry = v_entry_in;
@@ -277,70 +313,9 @@ public:
     a_entry = a_entry_in;
     a_exit = 0.0f;
 
-    // Decel phases [-j, 0, +j] starting from (v_entry, a_entry) ending at (0, 0).
-    //
-    // Phase 4 (jerk=-j): a goes from a_entry to -a_peak.  t5 = (a_entry + a_peak) / j
-    // Phase 5 (jerk= 0): hold at -a_peak.                  t6 = ...
-    // Phase 6 (jerk=+j): a goes from -a_peak to 0.         t7 = a_peak / j
-    //
-    // Total velocity change = v_entry (must decel from v_entry to 0).
-    //
-    // Triangular case (a_peak ≤ a_max):
-    //   Simulate the 3 phases symbolically to find a_peak from dv = v_entry.
-    //   Phase 4: dv4 = a_entry * t5 - 0.5 * j * t5²  where t5 = (a_entry + a_peak) / j
-    //   Phase 6: dv6 = -a_peak * t7 + 0.5 * j * t7²  where t7 = a_peak / j
-    //   dv4 + dv6 = -v_entry (velocity decreases by v_entry)
-    //
-    //   Working out: dv4 = (a_entry + a_peak)² / (2*j)  (net positive if a_entry > -a_peak)
-    //   Wait — let me be more careful. Phase 4 has jerk = -j:
-    //     dv4 = a_entry * t5 + 0.5 * (-j) * t5²
-    //         = a_entry * (a_entry + a_peak)/j - 0.5 * j * ((a_entry + a_peak)/j)²
-    //         = (a_entry + a_peak)/j * [a_entry - 0.5*(a_entry + a_peak)]
-    //         = (a_entry + a_peak)/j * (a_entry - a_peak)/2
-    //         = (a_entry² - a_peak²) / (2*j)
-    //
-    //   Phase 6 has jerk = +j:
-    //     dv6 = -a_peak * t7 + 0.5 * j * t7²
-    //         = -a_peak * (a_peak/j) + 0.5 * j * (a_peak/j)²
-    //         = -a_peak²/j + 0.5 * a_peak²/j
-    //         = -a_peak² / (2*j)
-    //
-    //   Total dv = dv4 + dv6 = (a_entry² - a_peak²)/(2j) - a_peak²/(2j)
-    //            = (a_entry² - 2*a_peak²) / (2*j)
-    //
-    //   We need total dv = -v_entry (deceleration):
-    //     (a_entry² - 2*a_peak²) / (2*j) = -v_entry
-    //     a_entry² - 2*a_peak² = -2*j*v_entry
-    //     a_peak² = (a_entry² + 2*j*v_entry) / 2
-    //     a_peak = sqrt((a_entry² + 2*j*v_entry) / 2)
-
-    const float a_ent = a_entry_in;
-    float a_peak_sq = (a_ent * a_ent + 2.0f * j_max * v_entry) / 2.0f;
-    if (a_peak_sq < 0.0f) a_peak_sq = 0.0f;
-    float a_peak = SQRT(a_peak_sq);
-
     float t5, t6, t7;
-    if (a_peak <= a_max) {
-      // Triangular: no hold phase
-      t5 = (a_ent + a_peak) / j_max;
-      t6 = 0.0f;
-      t7 = a_peak / j_max;
-    } else {
-      // Trapezoidal: a_peak clamped to a_max
-      a_peak = a_max;
-      t5 = (a_ent + a_max) / j_max;
-      t7 = a_max / j_max;
-      // dv from phase 4 + phase 6 without hold:
-      float dv_no_hold = (a_ent * a_ent - a_max * a_max) / (2.0f * j_max) - a_max * a_max / (2.0f * j_max);
-      // == (a_ent² - 2*a_max²) / (2*j)
-      // Remaining dv for hold phase:
-      float dv_hold = -v_entry - dv_no_hold;  // dv_hold should be negative (more decel)
-      t6 = _MAX(0.0f, -dv_hold / a_max);      // hold at -a_max: dv = -a_max * t6
-    }
+    dist_total = cj_planDecelRampWithA(v_entry, 0.0f, j_max, a_max, t5, t6, t7, a_entry);
 
-    if (t5 < 0.0f) t5 = 0.0f;
-
-    // Set phases: 0-3 = zero, 4-6 = decel ramp
     phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
     phase_dt[4] = t5;
     phase_dt[5] = t6;
@@ -348,16 +323,6 @@ public:
 
     total_duration = t5 + t6 + t7;
     buildPhaseCache();
-    // Compute actual distance by simulating through the phases directly.
-    // Can't use rawDistanceAtTime(total_duration) because it short-circuits
-    // via dist_total which hasn't been set yet.
-    {
-      float v_sim = v_entry, a_sim = a_entry, d_sim = 0.0f;
-      cj_simulatePhase(-j_max, t5, v_sim, a_sim, d_sim);
-      cj_simulatePhase(0,      t6, v_sim, a_sim, d_sim);
-      cj_simulatePhase(j_max,  t7, v_sim, a_sim, d_sim);
-      dist_total = d_sim;
-    }
   }
 
   // Plan with explicit jerk and a_max (used by the block merging planner).
@@ -377,6 +342,33 @@ public:
     a_entry = a_entry_in;
     a_exit = 0.0f;  // full S-curve always exits at a=0
 
+    // ─── Decel-side fast path ───
+    // When a_entry < 0 and v_exit <= v_entry, try placing a_entry on the decel
+    // side directly. This avoids the velocity dip from the accel-side approach
+    // (which applies +jerk to zero out a_entry before re-accelerating).
+    if (a_entry < 0.0f && v_exit <= v_entry) {
+      float dt5, dt6, dt7;
+      float d_decel = cj_planDecelRampWithA(v_entry, v_exit, j_max, a_max, dt5, dt6, dt7, a_entry);
+      // Use decel-side only when the ramp fits closely:
+      // - Exact fit or slight overshoot only. Large overshoot + truncation would
+      //   leave high exit velocity, breaking the planner's braking invariants.
+      // - When d_decel << dist_total, can't add cruise (a≠0), so fall through.
+      if (d_decel > 0.0f && d_decel >= dist_total - 0.01f && d_decel <= dist_total + 0.1f) {
+        phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
+        phase_dt[4] = dt5; phase_dt[5] = dt6; phase_dt[6] = dt7;
+        total_duration = dt5 + dt6 + dt7;
+        dist_total = d_decel;
+        buildPhaseCache();
+        if (d_decel > dist_total_in) {
+          truncateToDistance(dist_total_in);
+        }
+        return true;
+      }
+      // d_decel < dist_total: can't add cruise at non-zero accel. Fall through
+      // to accel-side approach which absorbs a_entry, cruises at v_valley, then decels.
+    }
+
+    // ─── Accel-side approach (standard) ───
     const float v_large = _MAX(v_entry, v_exit);
 
     // Minimum v_peak for the accel ramp with a_start = a_entry:
@@ -386,7 +378,6 @@ public:
     // continuation phase), so v_peak below v_entry is physically valid.
     const float v_peak_min_for_a = v_entry + a_entry * fabsf(a_entry) / (2.0f * j_max);
 
-    const float v_small = _MIN(v_entry, v_exit);
     // When a_entry < 0, v_peak can be below v_entry (accel ramp decreases velocity).
     // Only hard constraint: v_peak >= v_exit (decel ramp needs v_peak above v_exit).
     const float v_hard_floor = (a_entry >= 0.0f) ? v_large : v_exit;

@@ -251,6 +251,84 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     // This correctly handles a_entry on the decel side, unlike plan_full which
     // decomposes into accel+cruise+decel and loses the a_entry on the decel side.
     traj.plan_decel_only(v_left_entry, a_decel, j_max, a_left_entry);
+
+    // If the decel ramp is shorter than block 0, reduce jerk so the gentler
+    // deceleration covers the full block distance.  Lower jerk is always
+    // physically valid (more conservative than the limit).
+    // Note: the jerk-distance relationship is non-monotonic when |a_entry|
+    // is large — very low jerk can produce negative distances.  Binary search
+    // with j_lo = j_max (known short) downward to find where dist >= mm[0].
+    {
+      float d_plan = traj.getDistanceAtTime(traj.getTotalDuration());
+      #ifdef CJ_DEBUG
+      if (d_plan < mm[0] - 0.01f)
+        printf("  JERK_REDUCTION: d_plan=%.6f mm[0]=%.6f gap=%.6f v=%.4f a=%.4f j=%.0f\n",
+               d_plan, mm[0], mm[0] - d_plan, v_left_entry, a_left_entry, j_max);
+      #endif
+      if (d_plan < mm[0] - 0.01f) {
+        // Find a j_lo where dist >= mm[0] by stepping down from j_max.
+        // The relationship near j_max is: lower j → more distance.
+        float j_found = 0;
+        float j_lo = j_max * 0.5f;
+        for (int step = 0; step < 10; step++) {
+          traj.plan_decel_only(v_left_entry, a_decel, j_lo, a_left_entry);
+          float d = traj.getDistanceAtTime(traj.getTotalDuration());
+          if (d >= mm[0] && d > 0) {
+            j_found = j_lo;
+            break;
+          }
+          if (d <= 0) break;  // non-monotonic region — stop searching
+          j_lo *= 0.5f;
+        }
+        if (j_found > 0) {
+          // Binary search between j_found (covers) and j_max (short)
+          float j_a = j_found, j_b = j_max;
+          for (int i = 0; i < 32; i++) {
+            float j_mid = 0.5f * (j_a + j_b);
+            traj.plan_decel_only(v_left_entry, a_decel, j_mid, a_left_entry);
+            float d_mid = traj.getDistanceAtTime(traj.getTotalDuration());
+            if (d_mid >= mm[0] && d_mid > 0) {
+              j_a = j_mid;  // still covers — try higher j (closer to j_max)
+            } else {
+              j_b = j_mid;  // too short — try lower j
+            }
+          }
+          traj.plan_decel_only(v_left_entry, a_decel, j_a, a_left_entry);
+        }
+        else {
+          // Couldn't find a valid j reduction — restore the original plan_decel_only.
+          // The step-down search may have left the trajectory in a bad state.
+          traj.plan_decel_only(v_left_entry, a_decel, j_max, a_left_entry);
+        }
+      }
+    }
+
+    // If decel ramp (even with jerk reduction) is still shorter than block 0,
+    // the entry conditions are too extreme for a pure decel to cover the block.
+    // Use plan_full over the total remaining distance: it absorbs the negative
+    // a_entry into the accel ramp, cruises, then decels to 0 at the end.
+    // Truncating to block 0 gives a gentle recovery from the deep decel.
+    {
+      float d_plan = traj.getDistanceAtTime(traj.getTotalDuration());
+      if (d_plan < mm[0] - 0.01f) {
+        float total_remaining = sumDist(mm, 0, block_count);
+        bool ok = traj.plan_full(v_left_entry, 0.0f, a_decel, j_max,
+                                 total_remaining, v_left_entry, a_left_entry);
+        #ifdef CJ_DEBUG
+        if (ok)
+          printf("  PLAN_FULL_RECOVERY: dist=%.6f over %.4fmm (block 0 = %.4f)\n",
+                 traj.getDistanceAtTime(traj.getTotalDuration()), total_remaining, mm[0]);
+        else
+          printf("  PLAN_FULL_RECOVERY: FAILED v=%.4f a=%.4f dist=%.4f\n",
+                 v_left_entry, a_left_entry, total_remaining);
+        #endif
+        if (!ok) {
+          // plan_full also failed — restore plan_decel_only (will have dist mismatch)
+          traj.plan_decel_only(v_left_entry, a_decel, j_max, a_left_entry);
+        }
+      }
+    }
+
     prev_plan_blocks = a_span;  // continue tracking the original plan's span
     #ifdef CJ_DEBUG
     {
@@ -307,11 +385,18 @@ float ConstantJerkBlockPlanner::maxSafeJunctionSpeed(
   // Max junction speed from braking distance alone
   float v_hi = maxReachableSpeed(v_exit_right, dist_right, v_geo_cap, a_right, j_max);
 
-  if (v_hi <= v_exit_right + 0.001f) return v_hi;
-
   // Check interior junctions at v_hi (common fast path)
   uint8_t n_interior = right_end - left_end - 1;
   if (n_interior == 0) return v_hi; // single-block right group, no interior junctions
+
+  // Hard cap: v_junction can never exceed any interior junction limit,
+  // since the decel ramp only gets slower over distance — the entry point
+  // (v_junction) is always the fastest point on the ramp.
+  for (uint8_t k = 0; k < n_interior; k++) {
+    v_hi = _MIN(v_hi, vmax_junction[left_end + k + 1]);
+  }
+
+  if (v_hi <= v_exit_right + 0.001f) return v_hi;
 
   auto check_interior = [&](float v_junc) -> bool {
     float d_cum = 0;
