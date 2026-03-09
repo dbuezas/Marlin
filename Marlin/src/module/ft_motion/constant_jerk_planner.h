@@ -69,23 +69,18 @@
  *   next cycle can decelerate safely. This is conservative when a≠0
  *   at block boundaries (max_safe_entry assumes a=0).
  *
- * ─── Merge algorithm (right-side superblock braking) ───
+ * ─── Merge algorithm (largest feasible left_end) ───
  *
- *   Bottom-up left_end selection with warm start from previous call:
- *
- *   1. Find left-compatible extent: same nominal, accel ratio ≤ 1.1,
- *      up to half the buffer when full.
- *   2. For each candidate left_end (bottom-up from warm start):
- *      a. Find right-compatible group starting at left_end
- *      b. Compute v_junction = maxSafeJunctionSpeed(...) using right-side
- *         superblock braking. The right group is a single continuous decel
- *         ramp (a≠0 at interior boundaries), which is more efficient than
- *         the per-block backward pass that wastes distance zeroing accel.
- *      c. v_junction ≤ vmax_junction[left_end] (geometric cap)
- *      d. v_junction ≥ max_safe_entry[left_end] (at least as good as per-block)
- *      e. Plan left S-curve toward v_junction, check interior junctions
- *   3. If left_end=0 (nothing feasible), emit the right side decel ramp.
+ *   1. Find left-compatible extent: same nominal, accel ratio ≤ 1.1.
+ *   2. Try from largest left_end downward, take first feasible:
+ *      a. v_junction = min(max_safe_entry[left_end], nominal, vmax_junction)
+ *      b. Plan left S-curve toward v_junction
+ *      c. Check interior junctions against vmax_junction[k]
+ *   3. If left_end=0 (nothing feasible), use full_stop_fallback decel ramp.
  *   4. Truncate trajectory to block 0, store (v, a) exit state.
+ *
+ *   Replanning each cycle from actual (v, a) compensates for the
+ *   conservative backward pass (which assumes a=0 at boundaries).
  */
 
 class ConstantJerkTrajectoryGenerator;  // Forward declaration
@@ -109,11 +104,10 @@ class ConstantJerkBlockPlanner {
   // Reset all planner state (called by the generator's planRunout/reset).
   void resetPlannerState() {
     orig_block_index = 0;
-    cant_brake_count = 0;
     v_exit_stored = 0;
     a_exit_stored = 0;
     prev_left_end = 0;
-    prev_plan_blocks = 0;
+    prev_v_junction = 0;
   }
 
   /**
@@ -130,7 +124,6 @@ class ConstantJerkBlockPlanner {
   uint8_t blockCount() const { return group_block_count; }
   uint8_t bufferConsumed() const { return group_buffer_consumed; }
   uint8_t currentBlockIndex() const { return orig_block_index; }
-  uint16_t cantBrakeCount() const { return cant_brake_count; }
 
  private:
   /**
@@ -138,38 +131,14 @@ class ConstantJerkBlockPlanner {
    * capped by v_max. Newton's method on closed-form cj_rampDist.
    * When v_from > v_max, returns v_max (hard ceiling).
    * Monotone in dist_total: more distance → higher or equal result.
+   *
+   * a_entry: initial acceleration (default 0). When non-zero, the ramp must
+   * first absorb a_entry (bring a to 0), which uses distance and reduces
+   * the max reachable speed. Uses cj_planRamp with a_entry for distance.
    */
   float maxReachableSpeed(float v_from, float dist_total,
-                          float v_max, float a_max, float j_max);
-
-  /**
-   * Min speed reachable by decelerating from v_from over dist_total.
-   * If the decel ramp from v_from to 0 fits in dist_total, returns 0.
-   * Otherwise binary search on cj_rampDist (O(1) per iteration).
-   * Returns hi (slight overestimate within 0.001 mm/s).
-   * Monotone decreasing in dist_total: more distance → lower result.
-   */
-  float minReachableSpeed(float v_from, float dist_total,
-                          float a_max, float j_max);
-
-  /**
-   * Max junction speed between left and right groups using right-side
-   * superblock braking. The right group decelerates continuously from
-   * v_junction to v_exit_right (a≠0 at interior block boundaries).
-   *
-   * Constraints:
-   * - v_junction ≤ vmax_junction[left_end] (geometric cap at boundary)
-   * - The decel ramp fits in the right group's total distance
-   * - At each interior block boundary, velocity ≤ vmax_junction[i]
-   *
-   * // TODO: Instead of binary search, find the max v_junction analytically
-   * // by constraining the decel ramp to be tangent to the tightest interior
-   * // junction limit. This would be O(N) instead of O(N * log(1/eps)).
-   */
-  float maxSafeJunctionSpeed(
-      const float* mm, const float* nominal, const float* vmax_junction,
-      const float* accel, uint8_t left_end, uint8_t right_end,
-      float v_exit_right, float j_max);
+                          float v_max, float a_max, float j_max,
+                          float a_entry = 0.0f);
 
   // Execution tracking
   uint8_t orig_block_index = 0;
@@ -178,18 +147,13 @@ class ConstantJerkBlockPlanner {
   float orig_block_start_dist = 0;
   float orig_block_end_dist = 0;
 
-  // Diagnostics
-  uint16_t cant_brake_count = 0;    // how many times the can't-brake fallback triggered
-
-  // Proposal B: stored exit state from last emitted block
+  // Stored exit state from last emitted block
   float v_exit_stored = 0;
   float a_exit_stored = 0;
 
-  // Warm start for bottom-up left_end selection
+  // Previous call's left_end and v_junction. Used as fallback:
+  // prev_left_end - 1 with prev_v_junction is guaranteed feasible
+  // because the previous trajectory already proved it.
   uint8_t prev_left_end = 0;
-
-  // How many blocks the previous plan's trajectory spanned. Used by
-  // full_stop_fallback to compute a_min over the original superblock's blocks,
-  // excluding new tail blocks that weren't part of the validated plan.
-  uint8_t prev_plan_blocks = 0;
+  float prev_v_junction = 0;
 };

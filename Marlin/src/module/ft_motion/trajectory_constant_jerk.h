@@ -69,6 +69,14 @@ static inline float cj_planRamp(float v_start, float v_peak, float j_max, float 
     dt_hold = 0;
     dt_jerk2 = a_peak / j_max;
   }
+  else if (!decel && a_start > a_max) {
+    // a_start already exceeds a_max (inherited from previous trajectory truncation).
+    // Can't use +j phase to go higher. Hold at a_start, then -j to 0.
+    dt_jerk1 = 0;
+    dt_jerk2 = a_start / j_max;
+    float dv_jerk2 = a_start * a_start / (2.0f * j_max);
+    dt_hold = _MAX(0.0f, (dv - dv_jerk2) / a_start);
+  }
   else {
     dt_jerk1 = (a_max - a_start) / j_max;
     dt_jerk2 = a_max / j_max;
@@ -184,105 +192,6 @@ static inline float cj_decelRampDistAtVelocity(
   return dist_ramp_total - dist_from_end;
 }
 
-// Velocity at distance d along a 3-phase decel ramp from v_entry to v_exit.
-// The ramp has phases: [-j, 0, +j] (decel S-curve starting from a=0).
-// d is measured from the start of the ramp.
-// Returns v_entry if d <= 0, v_exit if d >= total ramp distance.
-static inline float cj_decelVelocityAtDistance(
-    float v_entry, float v_exit, float j_max, float a_max, float d) {
-  if (d <= 0.0f) return v_entry;
-  if (v_entry <= v_exit) return v_entry; // no decel needed
-
-  // Plan the decel ramp to get phase durations
-  float dt1, dt2, dt3;
-  float dist_total = cj_planRamp(v_exit, v_entry, j_max, a_max, true, dt1, dt2, dt3);
-  if (d >= dist_total) return v_exit;
-
-  // Simulate through phases to find phase boundaries
-  // Decel ramp: phase A = jerk -j_max, phase B = const accel, phase C = jerk +j_max
-  // Starting from v_entry, a=0
-  float v = v_entry, a = 0.0f, s = 0.0f;
-
-  // Phase A: jerk = -j_max, duration dt1
-  {
-    float s_start = s;
-    float v_start = v;
-    float a_start = a;
-    float jk = -j_max;
-    float s_end = s_start + v_start * dt1 + 0.5f * a_start * dt1 * dt1
-                  + (1.0f / 6.0f) * jk * dt1 * dt1 * dt1;
-    if (d <= s_end && dt1 > 0.0f) {
-      // Target is in phase A: solve s(t) = d for t, then compute v(t)
-      // s(t) = s_start + v_start*t + 0.5*a_start*t² + (jk/6)*t³
-      // Newton/bisection hybrid
-      float t_lo = 0.0f, t_hi = dt1;
-      float t = dt1 * ((d - s_start) / _MAX(s_end - s_start, 1e-12f));
-      t = _MAX(t_lo, _MIN(t, t_hi));
-      for (int i = 0; i < 16; i++) {
-        float ft = s_start + v_start * t + 0.5f * a_start * t * t
-                   + (1.0f / 6.0f) * jk * t * t * t - d;
-        if (ft < 0.0f) t_lo = t; else t_hi = t;
-        if (t_hi - t_lo < 1e-7f) break;
-        float fp = v_start + a_start * t + 0.5f * jk * t * t;
-        if (fp > 1e-6f) {
-          t -= ft / fp;
-          if (t < t_lo || t > t_hi) t = 0.5f * (t_lo + t_hi);
-        } else {
-          t = 0.5f * (t_lo + t_hi);
-        }
-      }
-      return v_start + a_start * t + 0.5f * jk * t * t;
-    }
-    cj_simulatePhase(jk, dt1, v, a, s);
-  }
-
-  // Phase B: jerk = 0 (constant accel), duration dt2
-  {
-    float s_start = s;
-    float v_start = v;
-    float a_start = a;
-    float s_end = s_start + v_start * dt2 + 0.5f * a_start * dt2 * dt2;
-    if (d <= s_end && dt2 > 0.0f) {
-      // Quadratic: s_start + v_start*t + 0.5*a_start*t² = d
-      float ds = d - s_start;
-      if (a_start == 0.0f) return v_start;
-      float disc = v_start * v_start + 2.0f * a_start * ds;
-      float t = (-v_start + SQRT(_MAX(0.0f, disc))) / a_start;
-      t = _MAX(0.0f, _MIN(t, dt2));
-      return v_start + a_start * t;
-    }
-    cj_simulatePhase(0, dt2, v, a, s);
-  }
-
-  // Phase C: jerk = +j_max, duration dt3
-  {
-    float s_start = s;
-    float v_start = v;
-    float a_start = a;
-    float jk = j_max;
-    // Same Newton/bisection as phase A
-    float t_lo = 0.0f, t_hi = dt3;
-    float s_end = s_start + v_start * dt3 + 0.5f * a_start * dt3 * dt3
-                  + (1.0f / 6.0f) * jk * dt3 * dt3 * dt3;
-    float t = dt3 * ((d - s_start) / _MAX(s_end - s_start, 1e-12f));
-    t = _MAX(t_lo, _MIN(t, t_hi));
-    for (int i = 0; i < 16; i++) {
-      float ft = s_start + v_start * t + 0.5f * a_start * t * t
-                 + (1.0f / 6.0f) * jk * t * t * t - d;
-      if (ft < 0.0f) t_lo = t; else t_hi = t;
-      if (t_hi - t_lo < 1e-7f) break;
-      float fp = v_start + a_start * t + 0.5f * jk * t * t;
-      if (fp > 1e-6f) {
-        t -= ft / fp;
-        if (t < t_lo || t > t_hi) t = 0.5f * (t_lo + t_hi);
-      } else {
-        t = 0.5f * (t_lo + t_hi);
-      }
-    }
-    return v_start + a_start * t + 0.5f * jk * t * t;
-  }
-}
-
 class ConstantJerkTrajectoryGenerator : public TrajectoryGenerator {
 public:
   ConstantJerkTrajectoryGenerator() = default;
@@ -343,17 +252,20 @@ public:
     a_exit = 0.0f;  // full S-curve always exits at a=0
 
     // ─── Decel-side fast path ───
-    // When a_entry < 0 and v_exit <= v_entry, try placing a_entry on the decel
-    // side directly. This avoids the velocity dip from the accel-side approach
-    // (which applies +jerk to zero out a_entry before re-accelerating).
-    if (a_entry < 0.0f && v_exit <= v_entry) {
+    // Try placing a_entry on the decel side (phases 4-6) directly.
+    // Works for any a_entry sign when the decel ramp distance ≈ dist_total.
+    // For a_entry > 0: velocity first rises (positive accel), peaks, then falls.
+    //   Handles cases where the accel-side approach is infeasible (a_entry > a_max
+    //   or v_peak_floor too high for available distance).
+    // For a_entry < 0: avoids velocity dip from accel-side approach.
+    // cj_planDecelRampWithA returns 0 when the ramp is invalid (insufficient a_entry²
+    // for the velocity change), so the fall-through to accel-side is automatic.
+    {
       float dt5, dt6, dt7;
       float d_decel = cj_planDecelRampWithA(v_entry, v_exit, j_max, a_max, dt5, dt6, dt7, a_entry);
-      // Use decel-side only when the ramp fits closely:
-      // - Exact fit or slight overshoot only. Large overshoot + truncation would
-      //   leave high exit velocity, breaking the planner's braking invariants.
-      // - When d_decel << dist_total, can't add cruise (a≠0), so fall through.
-      if (d_decel > 0.0f && d_decel >= dist_total - 0.01f && d_decel <= dist_total + 0.1f) {
+      // Use decel-side only when the ramp overshoots or exactly fits.
+      // When d_decel < dist_total, fall through to accel-side (which adds cruise).
+      if (d_decel > 0.0f && d_decel >= dist_total) {
         phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
         phase_dt[4] = dt5; phase_dt[5] = dt6; phase_dt[6] = dt7;
         total_duration = dt5 + dt6 + dt7;
@@ -364,8 +276,7 @@ public:
         }
         return true;
       }
-      // d_decel < dist_total: can't add cruise at non-zero accel. Fall through
-      // to accel-side approach which absorbs a_entry, cruises at v_valley, then decels.
+      // d_decel doesn't fit: fall through to accel-side approach.
     }
 
     // ─── Accel-side approach (standard) ───
@@ -399,27 +310,66 @@ public:
 
       float minmimum_distance = totalRampDistWithAEntry(v_peak_floor);
       if (minmimum_distance > dist_total) {
-        SERIAL_ECHOLNPGM("CJ ERROR: infeasible target:", dist_total,
-          " minmimum_distance:", minmimum_distance,
-          " v_entry:", v_entry,
-          " v_exit:", v_exit,
-          " j_max:", j_max,
-          " a_max:", a_max
-        );
-        return false;
+        // Accel-side approach can't fit: absorption + decel ramps exceed block distance.
+        // Use partial absorption (+j in phase 0) then decel ramp in phases 4-6.
+        // Bisect absorption duration t0 so total distance = dist_total.
+        float dt_d1, dt_d2, dt_d3;
+        float d_decel = cj_planDecelRampWithA(v_entry, v_exit, j_max, a_max, dt_d1, dt_d2, dt_d3, a_entry);
+        #ifdef CJ_DEBUG
+          printf("    DEGENERATE: min_dist=%.4f > dist=%.4f, decel_ramp=%.4f v_exit=%.4f a_entry=%.4f\n",
+                 minmimum_distance, dist_total, d_decel, v_exit, a_entry);
+        #endif
+        if (d_decel > 0.0f) {
+          if (d_decel <= dist_total) {
+            // ── Gap case: decel fits but leaves extra distance ──
+            // Partial +j absorption in phase 0, then decel in phases 4-6.
+            // Bisect absorption duration t0 so total distance = dist_total.
+            float t0_lo = 0.0f, t0_hi = fabsf(a_entry) / j_max;
+            for (int iter = 0; iter < 30; iter++) {
+              float t0_mid = 0.5f * (t0_lo + t0_hi);
+              float a_abs = a_entry + j_max * t0_mid;
+              float v_abs = v_entry + a_entry * t0_mid + 0.5f * j_max * t0_mid * t0_mid;
+              float d_abs = v_entry * t0_mid + 0.5f * a_entry * t0_mid * t0_mid
+                            + (1.0f / 6.0f) * j_max * t0_mid * t0_mid * t0_mid;
+              float d1, d2, d3;
+              float d_dec = cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, d1, d2, d3, a_abs);
+              if (d_abs + d_dec <= dist_total)
+                t0_lo = t0_mid;
+              else
+                t0_hi = t0_mid;
+            }
+            float t0 = t0_lo;
+            float a_abs = a_entry + j_max * t0;
+            float v_abs = v_entry + a_entry * t0 + 0.5f * j_max * t0 * t0;
+            cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, dt_d1, dt_d2, dt_d3, a_abs);
 
-      } else if (dist_total - minmimum_distance > 0.001f) {
+            phase_dt[0] = t0;
+            phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
+            phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
+            total_duration = t0 + dt_d1 + dt_d2 + dt_d3;
+            buildPhaseCache();
+            return true;
+          } else {
+            // ── Overshoot case: decel ramp exceeds available distance ──
+            // Put decel in phases 4-6 and truncate.
+            phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
+            phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
+            total_duration = dt_d1 + dt_d2 + dt_d3;
+            dist_total = d_decel;
+            buildPhaseCache();
+            truncateToDistance(dist_total_in);
+            return true;
+          }
+        }
+        // d_decel invalid: fall through to build over-long trajectory
+      } else {
         for (int i = 0; i < 48; i++) {
           float v_mid = 0.5f * (v_peak_min + v_peak_max);
           float dist_mid = totalRampDistWithAEntry(v_mid);
-          float overshoot = dist_mid - dist_total;
-          if (overshoot > 0) {
+          if (dist_mid > dist_total) {
             v_peak_max = v_mid;
           } else {
             v_peak_min = v_mid;
-            if (-overshoot <= 0.001f) {
-              break;
-            }
           }
         }
       }
@@ -580,7 +530,6 @@ public:
   ConstantJerkBlockPlanner& planner() { return planner_; }
   uint8_t bufferConsumed() const { return planner_.bufferConsumed(); }
   uint8_t blockCount() const { return planner_.blockCount(); }
-  uint16_t cantBrakeCount() const { return planner_.cantBrakeCount(); }
   uint8_t currentBlockIndex() const { return planner_.currentBlockIndex(); }
 
 private:
