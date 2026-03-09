@@ -68,7 +68,16 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   float max_safe_entry[BLOCK_BUFFER_SIZE + 1];
   max_safe_entry[block_count] = 0.0f;
   for (int8_t i = block_count - 1; i > 0; i--) {
-    max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], j_max);
+    float safe;
+    if (buffer_full && i == block_count - 1) {
+      // S-curve decel to v>0 takes MORE distance than to 0.
+      // Use worst-case decel distance for the last visible block.
+      float cap = _MIN(nominal[i], vmax_junction[i]);
+      safe = cj_maxSafeEntryForAnyExit(mm[i], cap, j_max, accel[i]);
+    } else {
+      safe = maxReachableSpeed(max_safe_entry[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], j_max);
+    }
+    max_safe_entry[i] = safe;
   }
 
   // Proposal B: carry both velocity and acceleration from previous block.
@@ -139,7 +148,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
       for (uint8_t k = 0; k + 1 < candidate; k++) dist_cum += mm[k];
       for (uint8_t k = candidate - 1; k >= 1; k--) {
         float v_at = traj.getVelocityAtDistance(dist_cum);
-        float v_limit = _MIN(nominal[k], vmax_junction[k]);
+        float v_limit = _MIN(nominal[k], _MIN(vmax_junction[k], max_safe_entry[k]));
         #ifdef CJ_DEBUG
           printf("    interior left junction[%d]: v_at=%.4f v_limit=%.4f at dist=%.4f → %s\n",
                  k, v_at, v_limit, dist_cum, (v_at > v_limit) ? "REJECT" : "OK");

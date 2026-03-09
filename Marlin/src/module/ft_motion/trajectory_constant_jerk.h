@@ -166,6 +166,32 @@ static inline float cj_rampDistDeriv(float v_start, float v_peak, float j_max, f
     return 0.5f * (a_max / j_max + 2.0f * v_peak / a_max);
 }
 
+// Worst-case decel distance from V to any v_exit in [0, V].
+// S-curve decel to v>0 can take MORE distance than to 0.
+// Triangular (V <= 3*a^2/(2j)): worst at v_exit = V/3
+// Trapezoidal (V > 3*a^2/(2j)): worst at v_exit = a^2/(2j)
+static inline float cj_worstCaseDecelDist(float V, float j_max, float a_max) {
+  if (V <= 0.0f) return 0.0f;
+  const float threshold = 1.5f * a_max * a_max / j_max;  // 3*a^2/(2j)
+  float v_low = (V <= threshold) ? V / 3.0f : a_max * a_max / (2.0f * j_max);
+  return cj_rampDist(v_low, V, j_max, a_max);
+}
+
+// Max entry speed such that decel to ANY exit speed fits within distance mm.
+static inline float cj_maxSafeEntryForAnyExit(float mm, float v_cap, float j_max, float a_max) {
+  if (mm <= 0.0f) return 0.0f;
+  if (cj_worstCaseDecelDist(v_cap, j_max, a_max) <= mm) return v_cap;
+  float lo = 0.0f, hi = v_cap;
+  for (int i = 0; i < 32; i++) {
+    float mid = 0.5f * (lo + hi);
+    if (cj_worstCaseDecelDist(mid, j_max, a_max) <= mm)
+      lo = mid;
+    else
+      hi = mid;
+  }
+  return lo;
+}
+
 // Distance from start of a 3-phase decel ramp (v_entry → v_exit) at which velocity = v_target.
 // Phase boundaries (dist_endA, v_endA, dist_endB, v_endB) and dist_ramp_total precomputed.
 // Requires: v_exit ≤ v_target ≤ v_entry.
