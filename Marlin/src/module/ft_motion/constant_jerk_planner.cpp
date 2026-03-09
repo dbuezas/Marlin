@@ -148,7 +148,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
       for (uint8_t k = 0; k + 1 < candidate; k++) dist_cum += mm[k];
       for (uint8_t k = candidate - 1; k >= 1; k--) {
         float v_at = traj.getVelocityAtDistance(dist_cum);
-        float v_limit = _MIN(nominal[k], _MIN(vmax_junction[k], max_safe_entry[k]));
+        float v_limit = _MIN(nominal[k], vmax_junction[k]);
         #ifdef CJ_DEBUG
           printf("    interior left junction[%d]: v_at=%.4f v_limit=%.4f at dist=%.4f → %s\n",
                  k, v_at, v_limit, dist_cum, (v_at > v_limit) ? "REJECT" : "OK");
