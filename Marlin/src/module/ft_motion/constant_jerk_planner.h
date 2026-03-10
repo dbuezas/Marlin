@@ -96,6 +96,13 @@ static float minVal(const float* arr, uint8_t from, uint8_t to) {
   return v;
 }
 
+// Maximum value in arr[from..to-1]
+static float maxVal(const float* arr, uint8_t from, uint8_t to) {
+  float v = arr[from];
+  for (uint8_t i = from + 1; i < to; i++) v = _MAX(v, arr[i]);
+  return v;
+}
+
 
 class ConstantJerkBlockPlanner {
  public:

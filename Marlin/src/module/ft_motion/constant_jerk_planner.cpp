@@ -140,11 +140,30 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     // Plan the left S-curve
     bool ok = traj.plan_full(v_left_entry, v_target, a_left, j_max, dist_left,
                               nominal[0], a_left_entry);
-    if (!ok) return -1;
+    if (!ok) {
+      if (candidate > 1) return -1;  // try shorter merge
+      // Single block: can't reach v_target (S-curve decel asymmetry).
+      // Replan targeting v=0 — decel to 0 uses LESS distance, so it fits.
+      // The planner's later truncation at mm[0] gives the best achievable exit.
+      v_target = 0.0f;
+      ok = traj.plan_full(v_left_entry, 0.0f, a_left, j_max, dist_left,
+                           nominal[0], a_left_entry);
+      if (!ok) return -1;  // shouldn't happen, but safety
+    }
 
     // Check velocity at block 0 exit (the truncation point).
     // S-curve decel to v>0 can take MORE distance than to v=0, so plan_full
     // may truncate internally and exit faster than v_target.
+    //
+    // DO NOT add max_safe_entry[1] here. The block0 exit is part of a
+    // truncated merged trajectory. On each subsequent cycle, as new blocks
+    // arrive, the planner refines the trajectory with more lookahead and
+    // can compute a higher safe exit. Capping at max_safe_entry[1] would
+    // force every merged trajectory to exit at backward-pass speed, which
+    // nullifies the entire merging algorithm — we'd end up with single
+    // blocks at a=0 entry/exit. The whole point of merging is that the
+    // merged trajectory has more distance available for decel than what
+    // the per-block backward pass assumes.
     if (block_count > 1) {
       float v_at_block0 = (candidate > 1) ? traj.getVelocityAtDistance(mm[0])
                                             : traj.getVelocityAtTime(traj.getTotalDuration());
@@ -156,25 +175,26 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
       #endif
       if (v_at_block0 > v_limit_block1 + 0.01f) {
         if (candidate == 1) {
-          // Single block, decel can't reach target. Replan targeting v=0
-          // (full stop uses less distance), then truncate will produce the
-          // best achievable exit speed.
+          // Single block exit overshoots junction. Replan targeting v=0 —
+          // decel to 0 uses less distance, so exit at mm[0] will be lower.
           traj.plan_full(v_left_entry, 0.0f, a_left, j_max, dist_left,
                           nominal[0], a_left_entry);
-          // Re-check: if even targeting 0 overshoots, accept it (best effort)
-          float v_recheck = traj.getVelocityAtTime(traj.getTotalDuration());
           #ifdef CJ_DEBUG
-            printf("    replan v=0: exit=%.4f vs limit=%.4f\n", v_recheck, v_limit_block1);
+            printf("    replan v=0: exit=%.4f vs limit=%.4f\n",
+                   traj.getVelocityAtTime(traj.getTotalDuration()), v_limit_block1);
           #endif
-          if (v_recheck <= v_limit_block1 + 0.01f) return 0.0f;
-          // Still exceeds — this is the best we can do, accept it
           return 0.0f;
         }
         return -1;
       }
     }
 
-    // Check interior left junctions
+    // Check interior left junctions.
+    // NOTE: only check vmax_junction here, NOT max_safe_entry. Interior
+    // superblock velocities are allowed to exceed max_safe_entry — that's
+    // the whole point of merging (more distance = higher v_peak).
+    // max_safe_entry only constrains the v_junction TARGET of the merged
+    // trajectory, not the intermediate truncated exits.
     if (candidate > 1) {
       float dist_cum = 0;
       for (uint8_t k = 0; k + 1 < candidate; k++) dist_cum += mm[k];
@@ -183,9 +203,13 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
         float v_limit = _MIN(nominal[k], vmax_junction[k]);
         #ifdef CJ_DEBUG
           printf("    interior left junction[%d]: v_at=%.4f v_limit=%.4f at dist=%.4f → %s\n",
-                 k, v_at, v_limit, dist_cum, (v_at > v_limit) ? "REJECT" : "OK");
+                 k, v_at, v_limit, dist_cum, (v_at > v_limit + 0.01f) ? "REJECT" : "OK");
         #endif
-        if (v_at > v_limit) {
+        // Tolerance matches block0 exit check (line 176). Without it,
+        // floating-point equality (e.g. v_at=27.0000 vs v_limit=27.0000)
+        // rejects valid merges, forcing single-block fallback that
+        // over-decelerates and causes unnecessary zero-speed touches.
+        if (v_at > v_limit + 0.01f) {
           return -1;
         }
         dist_cum -= mm[k - 1];
@@ -210,8 +234,6 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   // prev_left_end blocks. After consuming 1, prev_left_end - 1 blocks remain.
   // Re-targeting the same v_junction should be feasible since the previous
   // trajectory already proved it from the current (v, a).
-  // TODO: if this still fails, binary search between prev_v_junction and
-  // the new backward pass value could find a feasible intermediate target.
   if (best_left_end == 0 && prev_left_end > 1) {
     uint8_t fallback = prev_left_end - 1;
     if (fallback <= block_count) {

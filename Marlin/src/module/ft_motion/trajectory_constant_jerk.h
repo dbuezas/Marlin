@@ -102,6 +102,11 @@ static inline float cj_planDecelRampWithA(
     float &dt_jerk1, float &dt_hold, float &dt_jerk2,
     float a_start = 0.0f) {
   const float dv = v_start - v_end;  // total velocity to shed
+  // The previous cycle may have used a higher a_max, so |a_start| can
+  // exceed this block's a_max. Honor it — the acceleration already
+  // happened. Without this, dt_jerk1 goes negative and the clamp
+  // produces distorted ramp shapes.
+  a_max = _MAX(a_max, fabsf(a_start));
   // a_peak² = (a_start² + 2·j·dv) / 2
   float a_peak_sq = (a_start * a_start + 2.0f * j_max * dv) / 2.0f;
   if (a_peak_sq < 0.0f) a_peak_sq = 0.0f;
@@ -121,8 +126,6 @@ static inline float cj_planDecelRampWithA(
     float dv_hold = -dv - dv_no_hold;  // remaining dv for hold phase
     dt_hold = _MAX(0.0f, -dv_hold / a_max);
   }
-
-  if (dt_jerk1 < 0.0f) dt_jerk1 = 0.0f;
 
   // Simulate to compute distance
   float v = v_start, a = a_start, dist = 0.0f;
@@ -298,6 +301,14 @@ public:
         dist_total = d_decel;
         buildPhaseCache();
         if (d_decel > dist_total_in) {
+          if (v_exit > 0.01f) {
+            // Decel to v_exit>0 overshoots (S-curve asymmetry: decel to v>0
+            // takes MORE distance than to 0). Return false so the caller
+            // can retry with a lower v_exit.
+            return false;
+          }
+          // Decel to 0 overshoots (can't-brake): truncate and return true.
+          // This is normal streaming behavior that self-corrects next cycle.
           truncateToDistance(dist_total_in);
         }
         return true;
@@ -367,17 +378,33 @@ public:
             float t0 = t0_lo;
             float a_abs = a_entry + j_max * t0;
             float v_abs = v_entry + a_entry * t0 + 0.5f * j_max * t0 * t0;
-            cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, dt_d1, dt_d2, dt_d3, a_abs);
+            float d_abs_final = v_entry * t0 + 0.5f * a_entry * t0 * t0
+                                + (1.0f / 6.0f) * j_max * t0 * t0 * t0;
+            float d_dec_final = cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, dt_d1, dt_d2, dt_d3, a_abs);
+            float d_covered = d_abs_final + d_dec_final;
 
             phase_dt[0] = t0;
-            phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
+            phase_dt[1] = phase_dt[2] = 0.0f;
+            // If v_abs dropped below v_exit, the trajectory can't reach
+            // the requested exit speed → return false so the caller retries.
+            if (v_abs < v_exit - 0.01f && d_dec_final < 0.01f) {
+              if (v_exit > 0.01f) return false;
+              // v_exit ≈ 0: can't-brake case. Accept with cruise at v_abs.
+              v_exit = v_abs;
+              a_exit = 0.0f;
+            }
+            float d_remain = dist_total - d_covered;
+            phase_dt[3] = (d_remain > 0.0f && v_exit > 0.01f) ? d_remain / v_exit : 0.0f;
             phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
-            total_duration = t0 + dt_d1 + dt_d2 + dt_d3;
+            total_duration = phase_dt[0] + phase_dt[3] + dt_d1 + dt_d2 + dt_d3;
             buildPhaseCache();
             return true;
           } else {
             // ── Overshoot case: decel ramp exceeds available distance ──
-            // Put decel in phases 4-6 and truncate.
+            if (v_exit > 0.01f) {
+              return false;  // retry with lower v_exit
+            }
+            // Can't-brake to 0: truncate, self-corrects next cycle.
             phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
             phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
             total_duration = dt_d1 + dt_d2 + dt_d3;
@@ -423,6 +450,10 @@ public:
     total_duration = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     buildPhaseCache();
     if (dist_total > requested_dist) {
+      if (v_exit > 0.01f) {
+        return false;  // retry with lower v_exit
+      }
+      // Can't-brake to 0: truncate, self-corrects next cycle.
       truncateToDistance(requested_dist);
     }
     return true;
