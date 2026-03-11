@@ -359,7 +359,24 @@ public:
         if (d_decel > 0.0f) {
           if (d_decel <= dist_total) {
             // ── Gap case: decel fits but leaves extra distance ──
-            // Partial +j absorption in phase 0, then decel in phases 4-6.
+            if (a_entry > 0.0f) {
+              // a_entry > 0: place decel ramp in phases 0-2 (negated j_max) + cruise.
+              // The +j absorption used for a_entry < 0 would push a > a_max here.
+              float d_remain = dist_total - d_decel;
+              phase_dt[0] = dt_d1; phase_dt[1] = dt_d2; phase_dt[2] = dt_d3;
+              if (v_exit > 0.01f) {
+                phase_dt[3] = d_remain / v_exit;
+              } else {
+                phase_dt[3] = 0.0f;
+                dist_total = d_decel;
+              }
+              phase_dt[4] = phase_dt[5] = phase_dt[6] = 0.0f;
+              total_duration = phase_dt[0] + phase_dt[1] + phase_dt[2] + phase_dt[3];
+              j_max = -j_max;  // phaseJerk(0..2) = [-j, 0, +j] matching decel ramp
+              buildPhaseCache();
+              return true;
+            }
+            // a_entry <= 0: partial +j absorption in phase 0, then decel in phases 4-6.
             // Bisect absorption duration t0 so total distance = dist_total.
             float t0_lo = 0.0f, t0_hi = fabsf(a_entry) / j_max;
             for (int iter = 0; iter < 30; iter++) {

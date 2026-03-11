@@ -64,9 +64,10 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   }
   vmax_junction[block_count] = 0.0f;  // must stop after last block
 
-  // Backward pass: max_safe_entry[i] = max feasible entry speed for [i..N)
-  float max_safe_entry[BLOCK_BUFFER_SIZE + 1];
-  max_safe_entry[block_count] = 0.0f;
+  // Backward pass: max feasible entry speed for [i..N) assuming per-block (unmerged) planning.
+  // NOT valid for merged trajectories — merging has more distance and can safely exceed these.
+  float max_safe_entry_to_unmerged_tail[BLOCK_BUFFER_SIZE + 1];
+  max_safe_entry_to_unmerged_tail[block_count] = 0.0f;
   for (int8_t i = block_count - 1; i > 0; i--) {
     float safe;
     if (buffer_full && i == block_count - 1) {
@@ -75,9 +76,9 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
       float cap = _MIN(nominal[i], vmax_junction[i]);
       safe = cj_maxSafeEntryForAnyExit(mm[i], cap, j_max, accel[i]);
     } else {
-      safe = maxReachableSpeed(max_safe_entry[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], j_max);
+      safe = maxReachableSpeed(max_safe_entry_to_unmerged_tail[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], j_max);
     }
-    max_safe_entry[i] = safe;
+    max_safe_entry_to_unmerged_tail[i] = safe;
   }
 
   // Proposal B: carry both velocity and acceleration from previous block.
@@ -103,8 +104,8 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   #ifdef CJ_DEBUG
     printf("  planNext: v_entry=%.4f a_entry=%.4f block_count=%d max_left=%d\n",
            v_left_entry, a_left_entry, block_count, max_left_compatible);
-    printf("  backward pass max_safe_entry:");
-    for (uint8_t i = 0; i <= block_count; i++) printf(" [%d]=%.2f", i, max_safe_entry[i]);
+    printf("  backward pass max_safe_entry_to_unmerged_tail:");
+    for (uint8_t i = 0; i <= block_count; i++) printf(" [%d]=%.2f", i, max_safe_entry_to_unmerged_tail[i]);
     printf("\n");
     printf("  blocks: ");
     for (uint8_t i = 0; i < block_count; i++) printf(" [%d]{mm=%.2f nom=%.0f amax=%.0f vj=%.0f}", i, mm[i], nominal[i], accel[i], vmax_junction[i]);
@@ -113,7 +114,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
 
   // ─── Left_end selection (largest feasible, backward pass only) ───
   //
-  // For each candidate left_end, v_junction = max_safe_entry[left_end]
+  // For each candidate left_end, v_junction = max_safe_entry_to_unmerged_tail[left_end]
   // (backward pass with a=0 at boundaries). Plan the left S-curve and
   // check interior junctions against vmax_junction. Pick the LARGEST
   // feasible left_end — more blocks = more room for the S-curve = higher
@@ -126,7 +127,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   auto try_left_end = [&](uint8_t candidate, float v_junction_override = 0) -> float {
     float v_junction = v_junction_override > 0
       ? _MIN(v_junction_override, _MIN(nominal[0], vmax_junction[candidate]))
-      : _MIN(max_safe_entry[candidate], _MIN(nominal[0], vmax_junction[candidate]));
+      : _MIN(max_safe_entry_to_unmerged_tail[candidate], _MIN(nominal[0], vmax_junction[candidate]));
 
     float dist_left = sumDist(mm, 0, candidate);
     float a_left = minVal(accel, 0, candidate);
@@ -155,10 +156,10 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     // S-curve decel to v>0 can take MORE distance than to v=0, so plan_full
     // may truncate internally and exit faster than v_target.
     //
-    // DO NOT add max_safe_entry[1] here. The block0 exit is part of a
+    // DO NOT add max_safe_entry_to_unmerged_tail[1] here. The block0 exit is part of a
     // truncated merged trajectory. On each subsequent cycle, as new blocks
     // arrive, the planner refines the trajectory with more lookahead and
-    // can compute a higher safe exit. Capping at max_safe_entry[1] would
+    // can compute a higher safe exit. Capping at max_safe_entry_to_unmerged_tail[1] would
     // force every merged trajectory to exit at backward-pass speed, which
     // nullifies the entire merging algorithm — we'd end up with single
     // blocks at a=0 entry/exit. The whole point of merging is that the
@@ -170,7 +171,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
       float v_limit_block1 = _MIN(nominal[0], vmax_junction[1]);
       #ifdef CJ_DEBUG
         printf("    block0 exit check: v_at=%.4f v_limit=%.4f (vj=%.0f mse=%.2f buf_full=%d cand=%d) → %s\n",
-               v_at_block0, v_limit_block1, vmax_junction[1], max_safe_entry[1], buffer_full, candidate,
+               v_at_block0, v_limit_block1, vmax_junction[1], max_safe_entry_to_unmerged_tail[1], buffer_full, candidate,
                (v_at_block0 > v_limit_block1 + 0.01f) ? "REJECT" : "OK");
       #endif
       if (v_at_block0 > v_limit_block1 + 0.01f) {
@@ -190,10 +191,10 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     }
 
     // Check interior left junctions.
-    // NOTE: only check vmax_junction here, NOT max_safe_entry. Interior
-    // superblock velocities are allowed to exceed max_safe_entry — that's
+    // NOTE: only check vmax_junction here, NOT max_safe_entry_to_unmerged_tail. Interior
+    // superblock velocities are allowed to exceed max_safe_entry_to_unmerged_tail — that's
     // the whole point of merging (more distance = higher v_peak).
-    // max_safe_entry only constrains the v_junction TARGET of the merged
+    // max_safe_entry_to_unmerged_tail only constrains the v_junction TARGET of the merged
     // trajectory, not the intermediate truncated exits.
     if (candidate > 1) {
       float dist_cum = 0;
@@ -255,7 +256,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
 
   prev_left_end = best_left_end;
   // Store the v_junction used for this plan so the next call can use it as fallback
-  prev_v_junction = _MIN(max_safe_entry[best_left_end], _MIN(nominal[0], vmax_junction[best_left_end]));
+  prev_v_junction = _MIN(max_safe_entry_to_unmerged_tail[best_left_end], _MIN(nominal[0], vmax_junction[best_left_end]));
 
 
   // Emit only 1 block: truncate trajectory to block 0's distance.

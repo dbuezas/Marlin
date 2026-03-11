@@ -57,19 +57,19 @@
  *
  * ─── Backward pass ───
  *
- *   max_safe_entry[i] = max speed at which block i can be entered (with a=0)
+ *   max_safe_entry_to_unmerged_tail[i] = max speed at which block i can be entered (with a=0)
  *   such that blocks [i..N) can decelerate to a stop by block N.
  *
  *   Computed right-to-left:
- *     max_safe_entry[N] = 0
- *     max_safe_entry[i] = maxReachableSpeed(max_safe_entry[i+1], mm[i],
+ *     max_safe_entry_to_unmerged_tail[N] = 0
+ *     max_safe_entry_to_unmerged_tail[i] = maxReachableSpeed(max_safe_entry_to_unmerged_tail[i+1], mm[i],
  *                            min(nominal[i], vmax_junction[i]), accel[i], j_max)
  *
  * ─── Merge algorithm (largest feasible left_end) ───
  *
  *   1. Find left-compatible extent: same nominal, accel ratio ≤ 1.1.
  *   2. Try from largest left_end downward, take first feasible:
- *      a. v_junction = min(max_safe_entry[left_end], nominal, vmax_junction)
+ *      a. v_junction = min(max_safe_entry_to_unmerged_tail[left_end], nominal, vmax_junction)
  *      b. Plan left S-curve toward v_junction
  *      c. Check velocity at block 0 exit against vmax_junction[1]
  *      d. Check interior junctions against vmax_junction[k]
