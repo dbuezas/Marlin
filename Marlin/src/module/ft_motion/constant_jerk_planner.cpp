@@ -448,31 +448,45 @@ float ConstantJerkBlockPlanner::maxReachableSpeed(float v_from, float dist_total
 
   if (hi <= v_from) return hi;
 
-  // ─── a_entry != 0: use cj_planRamp with a_entry for distance ───
-  // The accel ramp from (v_from, a_entry) to (v_peak, 0) costs more distance
-  // when a_entry < 0 (must absorb deceleration first). Pure bisection.
+  // ─── a_entry != 0: Newton + bisection using closed-form cj_rampDistWithA ───
   if (a_entry != 0.0f) {
-    float dt1, dt2, dt3;
-    // Check if hi is already achievable
-    float d_hi = cj_planRamp(v_from, hi, j_max, a_max, false, dt1, dt2, dt3, a_entry);
-    if (d_hi <= dist_total) return hi;
+    if (cj_rampDistWithA(v_from, hi, j_max, a_max, a_entry) <= dist_total) return hi;
 
     // Lower bound: minimum feasible v_peak for the accel ramp with a_entry.
-    // Below this, a_peak_sq < 0 and the ramp can't end at a=0.
     float v_lo = v_from + a_entry * fabsf(a_entry) / (2.0f * j_max);
     if (v_lo < 0.0f) v_lo = 0.0f;
 
-    // Bisection: max v_peak where accel ramp distance ≤ dist_total
-    float v_hi = hi;
-    for (int i = 0; i < 20; i++) {
-      float mid = 0.5f * (v_lo + v_hi);
-      float d = cj_planRamp(v_from, mid, j_max, a_max, false, dt1, dt2, dt3, a_entry);
-      if (d <= dist_total)
-        v_lo = mid;
-      else
-        v_hi = mid;
+    // Initial guess: midpoint (trapezoidal inverse is complex with a_entry)
+    float v_peak = 0.5f * (v_lo + hi);
+
+    // Newton: f(v_peak) = cj_rampDistWithA(v_from, v_peak, ..., a_entry) - dist_total = 0
+    for (int i = 0; i < 10; i++) {
+      if (v_peak <= v_lo) { v_peak = v_lo + 0.001f; }
+      const float f = cj_rampDistWithA(v_from, v_peak, j_max, a_max, a_entry) - dist_total;
+      const float fp = cj_rampDistWithADeriv(v_from, v_peak, j_max, a_max, a_entry);
+      if (fp < 1e-10f) break;
+      const float step = f / fp;
+      v_peak -= step;
+      if (v_peak < v_lo) v_peak = v_lo;
+      if (v_peak > hi) v_peak = hi;
+      if (f <= 0.0f && f > -0.01f) break;
+      if (step < 0.001f && step > -0.001f) break;
     }
-    return _MIN(v_lo, v_max);
+
+    // Guarantee: returned speed is conservative (ramp fits in distance).
+    v_peak = _MIN(v_peak, hi);
+    if (v_peak > v_lo && cj_rampDistWithA(v_from, v_peak, j_max, a_max, a_entry) > dist_total) {
+      float v_hi = v_peak;
+      for (int i = 0; i < 10; i++) {
+        float mid = 0.5f * (v_lo + v_hi);
+        if (cj_rampDistWithA(v_from, mid, j_max, a_max, a_entry) <= dist_total)
+          v_lo = mid;
+        else
+          v_hi = mid;
+      }
+      v_peak = v_lo;
+    }
+    return _MIN(v_peak, v_max);
   }
 
   // ─── a_entry == 0: fast path with closed-form cj_rampDist ───

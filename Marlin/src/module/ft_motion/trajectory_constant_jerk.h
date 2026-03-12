@@ -181,6 +181,77 @@ static inline float cj_rampDistDeriv(float v_start, float v_peak, float j_max, f
     return 0.5f * (a_max / j_max + 2.0f * v_peak / a_max);
 }
 
+// Closed-form ramp distance with initial acceleration (O(1), no simulation).
+// Equivalent to cj_planRamp(v_start, v_peak, j, a_max, false, ..., a_start).
+// Accel ramp: (v_start, a_start) → (v_peak, 0) with jerk +j.
+// Computes phase durations identically to cj_planRamp, then evaluates distance
+// analytically (no cj_simulatePhase calls).
+static inline float cj_rampDistWithA(float v_start, float v_peak, float j_max, float a_max,
+                                      float a_start) {
+  if (a_start == 0.0f) return cj_rampDist(v_start, v_peak, j_max, a_max);
+  const float dv = v_peak - v_start;
+  float a_peak_sq = j_max * dv + 0.5f * a_start * a_start;
+  if (a_peak_sq < 0.0f) {
+    if (a_start < 0.0f) a_peak_sq = 0.0f;
+    else return 0.0f;
+  }
+  const float a_peak = SQRT(a_peak_sq);
+  const float j = j_max;
+
+  // Compute phase durations (same logic as cj_planRamp lines 68-86)
+  float t1, t2, t3;
+  if (a_peak <= a_max) {
+    t1 = (a_peak - a_start) / j;
+    t2 = 0.0f;
+    t3 = a_peak / j;
+  }
+  else if (a_start > a_max) {
+    t1 = 0.0f;
+    t3 = a_start / j;
+    const float dv_jerk2 = a_start * a_start / (2.0f * j);
+    t2 = _MAX(0.0f, (dv - dv_jerk2) / a_start);
+  }
+  else {
+    t1 = (a_max - a_start) / j;
+    t3 = a_max / j;
+    const float dv_no_hold = (2.0f * a_max * a_max - a_start * a_start) / (2.0f * j);
+    t2 = _MAX(0.0f, (dv - dv_no_hold) / a_max);
+  }
+
+  // Clamp negative durations (can happen when a_start > a_peak in triangular case)
+  if (t1 < 0.0f) t1 = 0.0f;
+
+  // Inline distance computation: d_phase = v*dt + 0.5*a*dt² + (jk/6)*dt³
+  // Phase 1: jerk = +j
+  float v = v_start, a = a_start, dist = 0.0f;
+  if (t1 > 0.0f) {
+    dist += v * t1 + 0.5f * a * t1 * t1 + (j / 6.0f) * t1 * t1 * t1;
+    v += a * t1 + 0.5f * j * t1 * t1;
+    a += j * t1;
+  }
+  // Phase 2: jerk = 0
+  if (t2 > 0.0f) {
+    dist += v * t2 + 0.5f * a * t2 * t2;
+    v += a * t2;
+  }
+  // Phase 3: jerk = -j
+  if (t3 > 0.0f) {
+    dist += v * t3 + 0.5f * a * t3 * t3 - (j / 6.0f) * t3 * t3 * t3;
+  }
+  return dist;
+}
+
+// ds/d(v_peak) of cj_rampDistWithA (v_start, a_start fixed, v_peak varies).
+// Uses finite difference (robust across all regime boundaries).
+static inline float cj_rampDistWithADeriv(float v_start, float v_peak, float j_max, float a_max,
+                                           float a_start) {
+  if (a_start == 0.0f) return cj_rampDistDeriv(v_start, v_peak, j_max, a_max);
+  const float h = _MAX(0.01f, v_peak * 1e-4f);
+  const float d_plus = cj_rampDistWithA(v_start, v_peak + h, j_max, a_max, a_start);
+  const float d_minus = cj_rampDistWithA(v_start, v_peak - h, j_max, a_max, a_start);
+  return (d_plus - d_minus) / (2.0f * h);
+}
+
 // Worst-case decel distance from V to any v_exit in [0, V].
 // S-curve decel to v>0 can take MORE distance than to 0.
 // Triangular (V <= 3*a^2/(2j)): worst at v_exit = V/3
