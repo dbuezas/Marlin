@@ -21,6 +21,7 @@
  */
 #pragma once
 
+
 #include "constant_jerk_planner.h"
 #include "trajectory_generator.h"
 #include <math.h>
@@ -96,7 +97,9 @@ static inline float cj_planRamp(float v_start, float v_peak, float j_max, float 
 
 // Plan a 3-phase decel ramp from (v_start, a_start) to (v_end, 0).
 // Phases: [-j, 0, +j]. a_start <= 0 (already decelerating) or 0.
-// Returns distance consumed. Sets dt_jerk1 (phase4), dt_hold (phase5), dt_jerk2 (phase6).
+// Returns distance consumed, or -1 if infeasible (|a_start| exceeds the
+// triangular peak — the -j phase would push acceleration further from zero).
+// Sets dt_jerk1 (phase4), dt_hold (phase5), dt_jerk2 (phase6).
 static inline float cj_planDecelRampWithA(
     float v_start, float v_end, float j_max, float a_max,
     float &dt_jerk1, float &dt_hold, float &dt_jerk2,
@@ -111,6 +114,15 @@ static inline float cj_planDecelRampWithA(
   float a_peak_sq = (a_start * a_start + 2.0f * j_max * dv) / 2.0f;
   if (a_peak_sq < 0.0f) a_peak_sq = 0.0f;
   float a_peak = SQRT(a_peak_sq);
+
+  if (a_start < 0.0f && -a_start > a_peak * 1.01f + 1.0f) {
+    // Already decelerating significantly harder than the triangular peak.
+    // The -j phase would push a even more negative — infeasible.
+    // Tolerance (1% relative + 1.0 absolute) avoids false negatives from
+    // float precision when |a_start| ≈ a_peak (dt_jerk1 ≈ 0, ramp still works).
+    dt_jerk1 = dt_hold = dt_jerk2 = 0.0f;
+    return -1.0f;
+  }
 
   if (a_peak <= a_max) {
     // Triangular: no hold phase
@@ -287,31 +299,43 @@ public:
     //   Handles cases where the accel-side approach is infeasible (a_entry > a_max
     //   or v_peak_floor too high for available distance).
     // For a_entry < 0: avoids velocity dip from accel-side approach.
-    // cj_planDecelRampWithA returns 0 when the ramp is invalid (insufficient a_entry²
-    // for the velocity change), so the fall-through to accel-side is automatic.
+    // cj_planDecelRampWithA returns -1 when infeasible (|a_entry| exceeds
+    // the triangular peak), so the fall-through to accel-side is automatic.
     {
       float dt5, dt6, dt7;
       float d_decel = cj_planDecelRampWithA(v_entry, v_exit, j_max, a_max, dt5, dt6, dt7, a_entry);
+      #ifdef CJ_DEBUG
+        printf("      plan_full: v_entry=%.4f v_exit=%.4f a_entry=%.4f d_decel=%.4f dist_total=%.4f\n",
+               v_entry, v_exit, a_entry, d_decel, dist_total);
+      #endif
       // Use decel-side only when the ramp overshoots or exactly fits.
       // When d_decel < dist_total, fall through to accel-side (which adds cruise).
       if (d_decel > 0.0f && d_decel >= dist_total) {
-        phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
-        phase_dt[4] = dt5; phase_dt[5] = dt6; phase_dt[6] = dt7;
-        total_duration = dt5 + dt6 + dt7;
-        dist_total = d_decel;
-        buildPhaseCache();
-        if (d_decel > dist_total_in) {
-          if (v_exit > 0.01f) {
-            // Decel to v_exit>0 overshoots (S-curve asymmetry: decel to v>0
-            // takes MORE distance than to 0). Return false so the caller
-            // can retry with a lower v_exit.
-            return false;
+        // When a_entry < 0 and the decel ramp overshoots for v_exit > 0,
+        // fall through to the accel-side approach instead of returning false.
+        // The accel-side's gap case (+j absorption + decel ramp) can often
+        // achieve the requested v_exit with less distance.
+        if (a_entry < 0.0f && d_decel - dist_total_in > 0.01f && v_exit > 0.01f) {
+          // Significant overshoot with a_entry < 0: fall through to accel-side approach.
+        } else {
+          phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
+          phase_dt[4] = dt5; phase_dt[5] = dt6; phase_dt[6] = dt7;
+          total_duration = dt5 + dt6 + dt7;
+          dist_total = d_decel;
+          buildPhaseCache();
+          if (d_decel > dist_total_in) {
+            if (d_decel - dist_total_in > 0.01f) {
+              // Decel ramp overshoots significantly. Return false so the
+              // caller can retry with a lower v_exit or shorter merge.
+              // For single-block last resort, the caller uses plan_decel_only.
+              return false;
+            }
+            // Tiny overshoot (float precision from trajectory reconstruction):
+            // truncate to fit.
+            truncateToDistance(dist_total_in);
           }
-          // Decel to 0 overshoots (can't-brake): truncate and return true.
-          // This is normal streaming behavior that self-corrects next cycle.
-          truncateToDistance(dist_total_in);
+          return true;
         }
-        return true;
       }
       // d_decel doesn't fit: fall through to accel-side approach.
     }
@@ -345,8 +369,8 @@ public:
       float v_peak_max = v_nominal;
       float v_peak_min = v_peak_floor;
 
-      float minmimum_distance = totalRampDistWithAEntry(v_peak_floor);
-      if (minmimum_distance > dist_total) {
+      float minimum_distance = totalRampDistWithAEntry(v_peak_floor);
+      if (minimum_distance > dist_total) {
         // Accel-side approach can't fit: absorption + decel ramps exceed block distance.
         // Use partial absorption (+j in phase 0) then decel ramp in phases 4-6.
         // Bisect absorption duration t0 so total distance = dist_total.
@@ -354,84 +378,72 @@ public:
         float d_decel = cj_planDecelRampWithA(v_entry, v_exit, j_max, a_max, dt_d1, dt_d2, dt_d3, a_entry);
         #ifdef CJ_DEBUG
           printf("    DEGENERATE: min_dist=%.4f > dist=%.4f, decel_ramp=%.4f v_exit=%.4f a_entry=%.4f\n",
-                 minmimum_distance, dist_total, d_decel, v_exit, a_entry);
+                 minimum_distance, dist_total, d_decel, v_exit, a_entry);
         #endif
-        if (d_decel > 0.0f) {
-          if (d_decel <= dist_total) {
-            // ── Gap case: decel fits but leaves extra distance ──
-            if (a_entry > 0.0f) {
-              // a_entry > 0: place decel ramp in phases 0-2 (negated j_max) + cruise.
-              // The +j absorption used for a_entry < 0 would push a > a_max here.
-              float d_remain = dist_total - d_decel;
-              phase_dt[0] = dt_d1; phase_dt[1] = dt_d2; phase_dt[2] = dt_d3;
-              if (v_exit > 0.01f) {
-                phase_dt[3] = d_remain / v_exit;
-              } else {
-                phase_dt[3] = 0.0f;
-                dist_total = d_decel;
-              }
-              phase_dt[4] = phase_dt[5] = phase_dt[6] = 0.0f;
-              total_duration = phase_dt[0] + phase_dt[1] + phase_dt[2] + phase_dt[3];
-              j_max = -j_max;  // phaseJerk(0..2) = [-j, 0, +j] matching decel ramp
-              buildPhaseCache();
-              return true;
-            }
-            // a_entry <= 0: partial +j absorption in phase 0, then decel in phases 4-6.
-            // Bisect absorption duration t0 so total distance = dist_total.
-            float t0_lo = 0.0f, t0_hi = fabsf(a_entry) / j_max;
-            for (int iter = 0; iter < 30; iter++) {
-              float t0_mid = 0.5f * (t0_lo + t0_hi);
-              float a_abs = a_entry + j_max * t0_mid;
-              float v_abs = v_entry + a_entry * t0_mid + 0.5f * j_max * t0_mid * t0_mid;
-              float d_abs = v_entry * t0_mid + 0.5f * a_entry * t0_mid * t0_mid
-                            + (1.0f / 6.0f) * j_max * t0_mid * t0_mid * t0_mid;
-              float d1, d2, d3;
-              float d_dec = cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, d1, d2, d3, a_abs);
-              if (d_abs + d_dec <= dist_total)
-                t0_lo = t0_mid;
-              else
-                t0_hi = t0_mid;
-            }
-            float t0 = t0_lo;
-            float a_abs = a_entry + j_max * t0;
-            float v_abs = v_entry + a_entry * t0 + 0.5f * j_max * t0 * t0;
-            float d_abs_final = v_entry * t0 + 0.5f * a_entry * t0 * t0
-                                + (1.0f / 6.0f) * j_max * t0 * t0 * t0;
-            float d_dec_final = cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, dt_d1, dt_d2, dt_d3, a_abs);
-            float d_covered = d_abs_final + d_dec_final;
+        // a_entry > 0 and decel fits: place decel ramp in phases 0-2 (negated j_max) + cruise.
+        if (a_entry > 0.0f && d_decel > 0.0f && d_decel <= dist_total + 0.01f) {
 
-            phase_dt[0] = t0;
-            phase_dt[1] = phase_dt[2] = 0.0f;
-            // If v_abs dropped below v_exit, the trajectory can't reach
-            // the requested exit speed → return false so the caller retries.
-            if (v_abs < v_exit - 0.01f && d_dec_final < 0.01f) {
-              if (v_exit > 0.01f) return false;
-              // v_exit ≈ 0: can't-brake case. Accept with cruise at v_abs.
-              v_exit = v_abs;
-              a_exit = 0.0f;
-            }
-            float d_remain = dist_total - d_covered;
-            phase_dt[3] = (d_remain > 0.0f && v_exit > 0.01f) ? d_remain / v_exit : 0.0f;
-            phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
-            total_duration = phase_dt[0] + phase_dt[3] + dt_d1 + dt_d2 + dt_d3;
-            buildPhaseCache();
-            return true;
-          } else {
-            // ── Overshoot case: decel ramp exceeds available distance ──
-            if (v_exit > 0.01f) {
-              return false;  // retry with lower v_exit
-            }
-            // Can't-brake to 0: truncate, self-corrects next cycle.
-            phase_dt[0] = phase_dt[1] = phase_dt[2] = phase_dt[3] = 0.0f;
-            phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
-            total_duration = dt_d1 + dt_d2 + dt_d3;
-            dist_total = d_decel;
-            buildPhaseCache();
-            truncateToDistance(dist_total_in);
-            return true;
-          }
+          phase_dt[0] = dt_d1; phase_dt[1] = dt_d2; phase_dt[2] = dt_d3;
+          float d_remain = dist_total - d_decel;
+          phase_dt[3] = (d_remain > 0.0f && v_exit > 0.01f) ? d_remain / v_exit : 0.0f;
+          phase_dt[4] = phase_dt[5] = phase_dt[6] = 0.0f;
+          total_duration = phase_dt[0] + phase_dt[1] + phase_dt[2] + phase_dt[3];
+          j_max = -j_max;  // phaseJerk(0..2) = [-j, 0, +j] matching decel ramp
+          dist_total = d_decel;
+          buildPhaseCache();
+          if (d_decel > dist_total_in) truncateToDistance(dist_total_in);
+          return true;
         }
-        // d_decel invalid: fall through to build over-long trajectory
+
+        // a_entry > 0: decel ramp doesn't fit → can't plan.
+        // (d_decel >= 0 always when a_entry > 0, so only overshoot possible.)
+        if (a_entry > 0.0f) return false;
+
+        // a_entry <= 0: partial +j absorption in phase 0, then decel in phases 4-6.
+        // Bisection finds absorption duration t0 so total distance fits within dist_total.
+        {
+          // Overshoot guard: if decel ramp alone (t0=0) already exceeds dist_total,
+          // no amount of absorption can help — absorption only adds distance.
+          if (d_decel > dist_total + 0.01f) return false;
+
+          float t0_lo = 0.0f, t0_hi = fabsf(a_entry) / j_max;
+          for (int iter = 0; iter < 30; iter++) {
+            float t0_mid = 0.5f * (t0_lo + t0_hi);
+            float a_abs = a_entry + j_max * t0_mid;
+            float v_abs = v_entry + a_entry * t0_mid + 0.5f * j_max * t0_mid * t0_mid;
+            float d_abs = v_entry * t0_mid + 0.5f * a_entry * t0_mid * t0_mid
+                          + (1.0f / 6.0f) * j_max * t0_mid * t0_mid * t0_mid;
+            float d1, d2, d3;
+            float d_dec = cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, d1, d2, d3, a_abs);
+            if (d_dec < 0.0f || d_abs + d_dec <= dist_total)
+              t0_lo = t0_mid;
+            else
+              t0_hi = t0_mid;
+          }
+          float t0 = t0_lo;
+          float a_abs = a_entry + j_max * t0;
+          float v_abs = v_entry + a_entry * t0 + 0.5f * j_max * t0 * t0;
+          float d_abs_final = v_entry * t0 + 0.5f * a_entry * t0 * t0
+                              + (1.0f / 6.0f) * j_max * t0 * t0 * t0;
+          float d_dec_final = cj_planDecelRampWithA(v_abs, v_exit, j_max, a_max, dt_d1, dt_d2, dt_d3, a_abs);
+          if (d_dec_final < 0.0f) d_dec_final = 0.0f;
+          float d_covered = d_abs_final + d_dec_final;
+
+          phase_dt[0] = t0;
+          phase_dt[1] = phase_dt[2] = 0.0f;
+          // If v_abs dropped below v_exit, the trajectory can't reach
+          // the requested exit speed → return false so the caller retries.
+          if (v_abs < v_exit - 0.01f && d_dec_final < 0.01f) return false;
+
+          float d_remain = dist_total - d_covered;
+          phase_dt[3] = (d_remain > 0.0f && v_exit > 0.01f) ? d_remain / v_exit : 0.0f;
+          phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
+          total_duration = phase_dt[0] + phase_dt[3] + dt_d1 + dt_d2 + dt_d3;
+          dist_total = _MAX(dist_total, d_covered);
+          buildPhaseCache();
+          if (dist_total > dist_total_in) truncateToDistance(dist_total_in);
+          return true;
+        }
       } else {
         for (int i = 0; i < 48; i++) {
           float v_mid = 0.5f * (v_peak_min + v_peak_max);
@@ -452,6 +464,11 @@ public:
 
     float dist_ramps = dist_accel + dist_decel;
     const float requested_dist = dist_total;
+    #ifdef CJ_DEBUG
+      if (v_peak < v_entry - 0.1f || v_peak < v_exit - 0.1f)
+        printf("      WARNING: v_peak=%.4f < v_entry=%.4f or v_exit=%.4f! dist_accel=%.4f dist_decel=%.4f dist_ramps=%.4f req=%.4f\n",
+               v_peak, v_entry, v_exit, dist_accel, dist_decel, dist_ramps, requested_dist);
+    #endif
     if (dist_ramps > dist_total) {
       // Ramps exceed requested distance (borderline infeasibility with a_entry).
       // Build the over-long trajectory, then truncate to fit.
@@ -467,10 +484,10 @@ public:
     total_duration = t1 + t2 + t3 + t4 + t5 + t6 + t7;
     buildPhaseCache();
     if (dist_total > requested_dist) {
-      if (v_exit > 0.01f) {
-        return false;  // retry with lower v_exit
+      if (dist_total - requested_dist > 0.01f) {
+        return false;  // ramps overshoot — caller retries with lower v_exit or shorter merge
       }
-      // Can't-brake to 0: truncate, self-corrects next cycle.
+      // Tiny overshoot from float precision: truncate to fit.
       truncateToDistance(requested_dist);
     }
     return true;
@@ -605,6 +622,17 @@ public:
   uint8_t bufferConsumed() const { return planner_.bufferConsumed(); }
   uint8_t blockCount() const { return planner_.blockCount(); }
   uint8_t currentBlockIndex() const { return planner_.currentBlockIndex(); }
+
+  void dumpPhases(const char* prefix = "") const {
+    printf("%s  v_entry=%.4f v_exit=%.4f a_entry=%.4f a_exit=%.4f j_max=%.1f a_max=%.1f dist=%.6f dur=%.6f\n",
+           prefix, v_entry, v_exit, a_entry, a_exit, j_max, a_max, dist_total, total_duration);
+    for (int i = 0; i < 7; i++) {
+      if (phase_dt[i] < 1e-12f) continue;
+      printf("%s  phase[%d]: dt=%.6f jerk=%+.1f  t0=%.6f v0=%.4f a0=%.4f pos0=%.6f\n",
+             prefix, i, phase_dt[i], phaseJerk(i),
+             phase_start_time[i], phase_start_v[i], phase_start_a[i], phase_start_pos[i]);
+    }
+  }
 
 private:
   // Raw distance-at-time without view offsets (used internally and by getTimeAtDistance)

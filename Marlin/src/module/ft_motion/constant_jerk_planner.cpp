@@ -141,15 +141,108 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     // Plan the left S-curve
     bool ok = traj.plan_full(v_left_entry, v_target, a_left, j_max, dist_left,
                               nominal[0], a_left_entry);
+    if (ok && candidate > 1) {
+      // Merged trajectory: verify it actually reached v_target.
+      // plan_full's can't-brake path returns true but exits at v >> v_target.
+      // The backward pass guarantees v_target is safe for the unmerged tail
+      // (assuming a=0 at the boundary). If the trajectory can't reach v_target,
+      // the truncation at block 0 will produce a (v, a) state that the tail
+      // can't handle. Reject and try a shorter merge.
+      float v_actual_exit = traj.getVelocityAtTime(traj.getTotalDuration());
+      if (v_actual_exit > v_target + 1.0f) {
+        #ifdef CJ_DEBUG
+          printf("    merge can't-brake: v_actual=%.4f > v_target=%.4f, rejecting candidate=%d\n",
+                 v_actual_exit, v_target, candidate);
+        #endif
+        return -1;
+      }
+    }
     if (!ok) {
       if (candidate > 1) return -1;  // try shorter merge
       // Single block: can't reach v_target (S-curve decel asymmetry).
+      float v_original_target = v_target;
       // Replan targeting v=0 — decel to 0 uses LESS distance, so it fits.
       // The planner's later truncation at mm[0] gives the best achievable exit.
       v_target = 0.0f;
       ok = traj.plan_full(v_left_entry, 0.0f, a_left, j_max, dist_left,
                            nominal[0], a_left_entry);
-      if (!ok) return -1;  // shouldn't happen, but safety
+      if (!ok) {
+        // plan_full(v=0) failed — block too short to fit even a full decel.
+        // But with a_entry < 0, the +j absorption naturally exits at
+        // v_absorbed = v_entry + a_entry*|a_entry|/(2*j). Try that directly.
+        if (a_left_entry < 0.0f) {
+          // The +j absorption naturally exits at v_absorbed after neutralizing a_entry.
+          // Only use this if v_absorbed <= v_original_target (respects backward pass).
+          // If v_absorbed > v_original_target, the absorption exits too fast for
+          // the unmerged tail — don't use it.
+          float v_absorbed = v_left_entry + a_left_entry * fabsf(a_left_entry) / (2.0f * j_max);
+          if (v_absorbed > 0.01f && v_absorbed <= v_original_target + 0.5f) {
+            ok = traj.plan_full(v_left_entry, v_absorbed, a_left, j_max, dist_left,
+                                 nominal[0], a_left_entry);
+            if (ok) {
+              v_target = v_absorbed;
+              #ifdef CJ_DEBUG
+                printf("    absorption exit: v_target=%.4f v_absorbed=%.4f (original=%.4f)\n",
+                       v_target, v_absorbed, v_original_target);
+              #endif
+            }
+          }
+        }
+        if (!ok) {
+          // True last resort: plan_decel_only without distance constraint,
+          // planner truncates to mm[0] afterward.
+          traj.plan_decel_only(v_left_entry, a_left, j_max, a_left_entry);
+          #ifdef CJ_DEBUG
+            printf("    last-resort plan_decel_only: dur=%.6f dist=%.4f\n",
+                   traj.getTotalDuration(), traj.getDistanceAtTime(traj.getTotalDuration()));
+          #endif
+          return 0.0f;
+        }
+      }
+
+      // When a_entry < 0, plan_full(v_original_target) may fail but plan_full
+      // succeeds for v_exit slightly above it (+j absorption uses less distance).
+      // Bisect upward to find lowest feasible v_exit. Only when v=0 plan
+      // under-exits (losing speed unnecessarily).
+      if (a_left_entry < 0.0f && block_count > 1 && v_original_target > 0.01f) {
+        float v_current_exit = traj.getVelocityAtTime(traj.getTotalDuration());
+        float v_absorbed = v_left_entry + a_left_entry * fabsf(a_left_entry) / (2.0f * j_max);
+        float v_limit = _MIN(nominal[0], vmax_junction[1]);
+        float ve_hi = _MIN(v_absorbed, v_limit);
+        if (ve_hi > v_original_target && ve_hi > 0.1f
+            && v_current_exit < v_original_target - 0.1f) {
+          float ve_lo = v_original_target, ve_best = 0.0f;
+          for (int iter = 0; iter < 24; iter++) {
+            float ve_mid = 0.5f * (ve_lo + ve_hi);
+            if (traj.plan_full(v_left_entry, ve_mid, a_left, j_max, dist_left,
+                                nominal[0], a_left_entry))
+              { ve_best = ve_mid; ve_hi = ve_mid; }
+            else
+              ve_lo = ve_mid;
+          }
+          bool used = false;
+          if (ve_best > 0.01f &&
+              traj.plan_full(v_left_entry, ve_best, a_left, j_max, dist_left,
+                              nominal[0], a_left_entry)) {
+            float ve_actual = traj.getVelocityAtTime(traj.getTotalDuration());
+            if (ve_actual >= v_current_exit - 0.01f
+                && ve_actual <= v_original_target + 0.5f) {
+              v_target = ve_best;
+              used = true;
+              #ifdef CJ_DEBUG
+                printf("    over-decel fix: v_target=%.4f exit=%.4f (was %.4f, v0_exit=%.4f)\n",
+                       ve_best, ve_actual, v_original_target, v_current_exit);
+              #endif
+            }
+          }
+          if (!used) {
+            // Restore v=0 plan (plan_full modifies state even on failure)
+            traj.plan_full(v_left_entry, 0.0f, a_left, j_max, dist_left,
+                            nominal[0], a_left_entry);
+            v_target = 0.0f;
+          }
+        }
+      }
     }
 
     // Check velocity at block 0 exit (the truncation point).
@@ -188,6 +281,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
         }
         return -1;
       }
+
     }
 
     // Check interior left junctions.
@@ -258,7 +352,6 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   // Store the v_junction used for this plan so the next call can use it as fallback
   prev_v_junction = _MIN(max_safe_entry_to_unmerged_tail[best_left_end], _MIN(nominal[0], vmax_junction[best_left_end]));
 
-
   // Emit only 1 block: truncate trajectory to block 0's distance.
   // truncateToDistance updates v_exit and a_exit on the trajectory.
   // For normal single-block plans, dist_total == mm[0] so this is a no-op.
@@ -270,6 +363,18 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     float pre_trunc_v_exit = traj.getVelocityAtTime(pre_trunc_dur);
     printf("  pre-truncate: dist=%.4f v_exit=%.4f duration=%.6f, truncating to %.4f\n",
            pre_trunc_dist, pre_trunc_v_exit, pre_trunc_dur, mm[0]);
+    // Show what the merged trajectory predicts at block 0+1 boundary
+    if (best_left_end > 1) {
+      float d2 = mm[0] + mm[1];
+      if (d2 <= pre_trunc_dist) {
+        float v_at_d2 = traj.getVelocityAtDistance(d2);
+        float t_at_d2 = traj.getTimeAtDistance(d2);
+        float a_at_d2 = traj.getAccelerationAtTime(t_at_d2);
+        float j_at_d2 = traj.getJerkAtTime(t_at_d2);
+        printf("  merged predicts at block[0+1] (d=%.4f): v=%.4f a=%.4f j=%.1f\n",
+               d2, v_at_d2, a_at_d2, j_at_d2);
+      }
+    }
   }
   #endif
   traj.truncateToDistance(mm[0]);
@@ -277,7 +382,8 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   v_exit_stored = traj.getExitSpeed();
   a_exit_stored = traj.getExitAccel();
   #ifdef CJ_DEBUG
-    printf("  post-truncate: v_exit=%.4f a_exit=%.4f\n", v_exit_stored, a_exit_stored);
+    printf("  post-truncate: v_exit=%.4f a_exit=%.4f j_exit=%.1f\n",
+           v_exit_stored, a_exit_stored, traj.getJerkAtTime(traj.getTotalDuration()));
   #endif
 
   // Execution tracking: always consume 1 block
