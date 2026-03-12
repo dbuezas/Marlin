@@ -252,6 +252,34 @@ static inline float cj_rampDistWithADeriv(float v_start, float v_peak, float j_m
   return (d_plus - d_minus) / (2.0f * h);
 }
 
+// Total accel+decel ramp distance using closed-form (O(1)).
+// Accel ramp uses a_entry, decel ramp starts from a=0.
+static inline float cj_totalRampDistCF(float v_entry, float v_exit, float v_peak,
+                                        float j_max, float a_max, float a_entry) {
+  return cj_rampDistWithA(v_entry, v_peak, j_max, a_max, a_entry)
+       + cj_rampDist(v_exit, v_peak, j_max, a_max);
+}
+
+// Derivative of cj_totalRampDistCF w.r.t. v_peak.
+static inline float cj_totalRampDistCFDeriv(float v_entry, float v_exit, float v_peak,
+                                             float j_max, float a_max, float a_entry) {
+  return cj_rampDistWithADeriv(v_entry, v_peak, j_max, a_max, a_entry)
+       + cj_rampDistDeriv(v_exit, v_peak, j_max, a_max);
+}
+
+// Algebraic initial guess for v_peak assuming both ramps are trapezoidal.
+// Solves: (1/a)*vp² + (a/j)*vp + C = dist_total (quadratic in vp).
+static inline float cj_vpeak_guess(float v_entry, float v_exit,
+                                    float dist_total, float j_max, float a_max) {
+  const float am2j = a_max * a_max / j_max;
+  const float B = am2j;
+  const float C = 0.5f * (v_entry * (am2j - v_entry) + v_exit * (am2j - v_exit))
+                  - a_max * dist_total;
+  const float disc = B * B - 4.0f * C;
+  if (disc < 0.0f) return 0.5f * (v_entry + v_exit);
+  return (-B + SQRT(disc)) * 0.5f;
+}
+
 // Worst-case decel distance from V to any v_exit in [0, V].
 // S-curve decel to v>0 can take MORE distance than to 0.
 // Triangular (V <= 3*a^2/(2j)): worst at v_exit = V/3
@@ -368,13 +396,6 @@ public:
     const float v_hard_floor = (a_entry >= 0.0f) ? _MAX(v_entry, v_exit) : v_exit;
     const float v_peak_floor = _MAX(v_hard_floor, v_peak_min_for_a);
 
-    auto totalRampDistWithAEntry = [&](float v_peak_test) -> float {
-      float dt1, dt2, dt3;
-      float d_accel = cj_planRamp(v_entry, v_peak_test, j_max, a_max, false, dt1, dt2, dt3, a_entry);
-      float d_decel = cj_planRamp(v_exit, v_peak_test, j_max, a_max, true, dt1, dt2, dt3);
-      return d_accel + d_decel;
-    };
-
     #ifdef CJ_DEBUG
       printf("      plan_full: v_entry=%.4f v_exit=%.4f a_entry=%.4f dist_total=%.4f v_peak_floor=%.4f\n",
              v_entry, v_exit, a_entry, dist_total, v_peak_floor);
@@ -409,8 +430,8 @@ public:
     }
 
     // Strategy 1: Standard 7-phase [+j, 0, -j, cruise, -j, 0, +j]
-    if (totalRampDistWithAEntry(v_peak_floor) <= dist_total)
-      return plan_standard(v_peak_floor, v_nominal, dist_total_in, totalRampDistWithAEntry);
+    if (cj_totalRampDistCF(v_entry, v_exit, v_peak_floor, j_max, a_max, a_entry) <= dist_total)
+      return plan_standard(v_peak_floor, v_nominal, dist_total_in);
 
     // Strategy 2: Partial absorption + decel (any a_entry != 0)
     if (a_entry != 0.0f)
@@ -562,21 +583,47 @@ public:
 
 private:
   // Strategy 1: Standard 7-phase trajectory [+j, 0, -j, cruise, -j, 0, +j].
-  // Binary search for v_peak in [v_peak_floor, v_nominal], then build phases.
-  template <typename F>
-  bool plan_standard(float v_peak_floor, float v_nominal, float dist_total_in, F& totalRampDistWithAEntry) {
+  // Newton + bisection for v_peak in [v_peak_floor, v_nominal], then build phases.
+  bool plan_standard(float v_peak_floor, float v_nominal, float dist_total_in) {
     float v_peak = v_nominal;
-    if (totalRampDistWithAEntry(v_nominal) > dist_total) {
-      // Binary search for v_peak
+    if (cj_totalRampDistCF(v_entry, v_exit, v_nominal, j_max, a_max, a_entry) > dist_total) {
       float v_lo = v_peak_floor, v_hi = v_nominal;
-      for (int i = 0; i < 48; i++) {
-        float v_mid = 0.5f * (v_lo + v_hi);
-        if (totalRampDistWithAEntry(v_mid) > dist_total)
-          v_hi = v_mid;
-        else
-          v_lo = v_mid;
+
+      // Initial guess: algebraic (trap+trap quadratic) for a_entry=0, midpoint otherwise
+      if (a_entry == 0.0f) {
+        float guess = cj_vpeak_guess(v_entry, v_exit, dist_total, j_max, a_max);
+        v_peak = _MAX(v_lo, _MIN(guess, v_hi));
+      } else {
+        v_peak = 0.5f * (v_lo + v_hi);
       }
-      v_peak = v_lo;
+
+      // Newton: f(v_peak) = totalRampDist(v_peak) - dist_total = 0
+      for (int i = 0; i < 10; i++) {
+        if (v_peak <= v_lo) v_peak = v_lo + 0.001f;
+        const float f = cj_totalRampDistCF(v_entry, v_exit, v_peak, j_max, a_max, a_entry) - dist_total;
+        const float fp = cj_totalRampDistCFDeriv(v_entry, v_exit, v_peak, j_max, a_max, a_entry);
+        if (fp < 1e-10f) break;
+        const float step = f / fp;
+        v_peak -= step;
+        if (v_peak < v_lo) v_peak = v_lo;
+        if (v_peak > v_hi) v_peak = v_hi;
+        if (f <= 0.0f && f > -0.01f) break;
+        if (step < 0.001f && step > -0.001f) break;
+      }
+
+      // Guarantee: conservative (ramp fits in distance). Bisect if Newton overshot.
+      v_peak = _MIN(v_peak, v_hi);
+      if (v_peak > v_lo && cj_totalRampDistCF(v_entry, v_exit, v_peak, j_max, a_max, a_entry) > dist_total) {
+        float v_bhi = v_peak;
+        for (int i = 0; i < 10; i++) {
+          float mid = 0.5f * (v_lo + v_bhi);
+          if (cj_totalRampDistCF(v_entry, v_exit, mid, j_max, a_max, a_entry) <= dist_total)
+            v_lo = mid;
+          else
+            v_bhi = mid;
+        }
+        v_peak = v_lo;
+      }
     }
 
     float t1, t2, t3, t4 = 0, t5, t6, t7;
