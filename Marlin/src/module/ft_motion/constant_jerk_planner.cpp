@@ -243,6 +243,50 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
           }
         }
       }
+
+      // Downward bisection: when plan_full(v_target) fails due to S-curve decel
+      // asymmetry (decel to v>0 needs more distance than to v=0), find the highest
+      // feasible v_exit in [0, v_original_target]. Works for any a_entry value.
+      // Only triggers when v=0 plan under-exits (losing speed unnecessarily).
+      if (v_target < 0.01f && block_count > 1 && v_original_target > 0.01f) {
+        float v_current_exit = traj.getVelocityAtTime(traj.getTotalDuration());
+        if (v_current_exit < v_original_target - 0.1f) {
+          float ve_lo = 0.0f, ve_hi = v_original_target, ve_best = 0.0f;
+          for (int iter = 0; iter < 24; iter++) {
+            float ve_mid = 0.5f * (ve_lo + ve_hi);
+            if (traj.plan_full(v_left_entry, ve_mid, a_left, j_max, dist_left,
+                                nominal[0], a_left_entry))
+              { ve_best = ve_mid; ve_lo = ve_mid; }
+            else
+              ve_hi = ve_mid;
+          }
+          bool used = false;
+          if (ve_best > 0.01f &&
+              traj.plan_full(v_left_entry, ve_best, a_left, j_max, dist_left,
+                              nominal[0], a_left_entry)) {
+            float ve_actual = traj.getVelocityAtTime(traj.getTotalDuration());
+            float dur = traj.getTotalDuration();
+            // Validate: exit must not have near-zero dip before the end
+            float v_near = (dur > 0.001f) ? traj.getVelocityAtTime(dur - 0.001f) : ve_actual;
+            if (ve_actual > v_current_exit + 0.01f
+                && ve_actual <= v_original_target + 0.5f
+                && fabsf(v_near - ve_actual) < _MAX(0.5f, ve_actual * 0.5f)) {
+              v_target = ve_best;
+              used = true;
+              #ifdef CJ_DEBUG
+                printf("    downward bisect fix: v_target=%.4f exit=%.4f (was %.4f, v0_exit=%.4f)\n",
+                       ve_best, ve_actual, v_original_target, v_current_exit);
+              #endif
+            }
+          }
+          if (!used) {
+            // Restore v=0 plan (plan_full modifies state even on failure)
+            traj.plan_full(v_left_entry, 0.0f, a_left, j_max, dist_left,
+                            nominal[0], a_left_entry);
+            v_target = 0.0f;
+          }
+        }
+      }
     }
 
     // Check velocity at block 0 exit (the truncation point).
