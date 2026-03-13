@@ -64,7 +64,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   }
   vmax_junction[block_count] = 0.0f;  // must stop after last block
 
-  // Proposal B: carry both velocity and acceleration from previous block.
+  // Carry both velocity and acceleration from previous block's exit.
   // The previous exit state already happened — never cap or reset it.
   float v_left_entry = v_exit_stored;
   float a_left_entry = a_exit_stored;
@@ -138,10 +138,8 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
         prev_v_junction = v_junction_new;
 
         orig_block_index = 0;
-        orig_block_start_dist = 0;
         group_block_count = 1;
         group_buffer_consumed = buf_offset[0] + 1;
-        orig_block_end_dist = mm[0];
 
         #ifdef CJ_DEBUG
           printf("  REUSE: left_end=%d v_junction=%.4f v_exit=%.4f a_exit=%.4f (stopped backward pass at i=%d of %d)\n",
@@ -394,7 +392,6 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
         }
         return -1;
       }
-
     }
 
     // Check interior left junctions.
@@ -405,22 +402,21 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     // trajectory, not the intermediate truncated exits.
     if (candidate > 1) {
       float dist_cum = 0;
-      for (uint8_t k = 0; k + 1 < candidate; k++) dist_cum += mm[k];
-      for (uint8_t k = candidate - 1; k >= 1; k--) {
+      for (uint8_t k = 1; k < candidate; k++) {
+        dist_cum += mm[k - 1];
         float v_at = traj.getVelocityAtDistance(dist_cum);
         float v_limit = _MIN(nominal[k], vmax_junction[k]);
         #ifdef CJ_DEBUG
           printf("    interior left junction[%d]: v_at=%.4f v_limit=%.4f at dist=%.4f → %s\n",
                  k, v_at, v_limit, dist_cum, (v_at > v_limit + 0.01f) ? "REJECT" : "OK");
         #endif
-        // Tolerance matches block0 exit check (line 176). Without it,
-        // floating-point equality (e.g. v_at=27.0000 vs v_limit=27.0000)
-        // rejects valid merges, forcing single-block fallback that
-        // over-decelerates and causes unnecessary zero-speed touches.
+        // Tolerance matches block0 exit check. Without it, floating-point
+        // equality (e.g. v_at=27.0000 vs v_limit=27.0000) rejects valid
+        // merges, forcing single-block fallback that over-decelerates and
+        // causes unnecessary zero-speed touches.
         if (v_at > v_limit + 0.01f) {
           return -1;
         }
-        dist_cum -= mm[k - 1];
       }
     }
 
@@ -494,8 +490,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   // Save pre-truncation trajectory for potential reuse in next planNext call.
   // Only save when merging (best_left_end > 1) — single blocks have nothing to reuse.
   if (best_left_end > 1) {
-    traj.savePreTruncation(
-      prev_traj_state);
+    traj.savePreTruncation(prev_traj_state);
     prev_mm_block0 = mm[0];
   } else {
     prev_traj_state.valid = false;
@@ -512,10 +507,8 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
 
   // Execution tracking: always consume 1 block
   orig_block_index = 0;
-  orig_block_start_dist = 0;
   group_block_count = 1;
   group_buffer_consumed = buf_offset[0] + 1;
-  orig_block_end_dist = mm[0];
 
   return true;
 }

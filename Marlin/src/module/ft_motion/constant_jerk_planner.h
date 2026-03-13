@@ -95,7 +95,7 @@ struct CJTrajectorySnapshot {
   bool valid = false;
 };
 
-static float sumDist(const float* mm_arr,  uint8_t from, uint8_t to) {
+static float sumDist(const float* mm_arr, uint8_t from, uint8_t to) {
   float total = 0;
   for (uint8_t i = from; i < to; i++) total += mm_arr[i];
   return total;
@@ -108,19 +108,13 @@ static float minVal(const float* arr, uint8_t from, uint8_t to) {
   return v;
 }
 
-// Maximum value in arr[from..to-1]
-static float maxVal(const float* arr, uint8_t from, uint8_t to) {
-  float v = arr[from];
-  for (uint8_t i = from + 1; i < to; i++) v = _MAX(v, arr[i]);
-  return v;
-}
-
-
 class ConstantJerkBlockPlanner {
  public:
   // Reset all planner state (called by the generator's planRunout/reset).
   void resetPlannerState() {
     orig_block_index = 0;
+    group_block_count = 0;
+    group_buffer_consumed = 0;
     v_exit_stored = 0;
     a_exit_stored = 0;
     prev_left_end = 0;
@@ -153,7 +147,7 @@ class ConstantJerkBlockPlanner {
    *
    * a_entry: initial acceleration (default 0). When non-zero, the ramp must
    * first absorb a_entry (bring a to 0), which uses distance and reduces
-   * the max reachable speed. Uses cj_planRamp with a_entry for distance.
+   * the max reachable speed. Uses cj_rampDistWithA for distance.
    */
   float maxReachableSpeed(float v_from, float dist_total,
                           float v_max, float a_max, float j_max,
@@ -163,8 +157,6 @@ class ConstantJerkBlockPlanner {
   uint8_t orig_block_index = 0;
   uint8_t group_block_count = 0;
   uint8_t group_buffer_consumed = 0;
-  float orig_block_start_dist = 0;
-  float orig_block_end_dist = 0;
 
   // Stored exit state from last emitted block
   float v_exit_stored = 0;
