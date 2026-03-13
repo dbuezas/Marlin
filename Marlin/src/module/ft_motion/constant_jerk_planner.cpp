@@ -64,23 +64,6 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   }
   vmax_junction[block_count] = 0.0f;  // must stop after last block
 
-  // Backward pass: max feasible entry speed for [i..N) assuming per-block (unmerged) planning.
-  // NOT valid for merged trajectories — merging has more distance and can safely exceed these.
-  float max_safe_entry_to_unmerged_tail[BLOCK_BUFFER_SIZE + 1];
-  max_safe_entry_to_unmerged_tail[block_count] = 0.0f;
-  for (int8_t i = block_count - 1; i > 0; i--) {
-    float safe;
-    if (buffer_full && i == block_count - 1) {
-      // S-curve decel to v>0 takes MORE distance than to 0.
-      // Use worst-case decel distance for the last visible block.
-      float cap = _MIN(nominal[i], vmax_junction[i]);
-      safe = cj_maxSafeEntryForAnyExit(mm[i], cap, j_max, accel[i]);
-    } else {
-      safe = maxReachableSpeed(max_safe_entry_to_unmerged_tail[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], j_max);
-    }
-    max_safe_entry_to_unmerged_tail[i] = safe;
-  }
-
   // Proposal B: carry both velocity and acceleration from previous block.
   // The previous exit state already happened — never cap or reset it.
   float v_left_entry = v_exit_stored;
@@ -101,38 +84,45 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     }
   }
 
-  #ifdef CJ_DEBUG
-    printf("  planNext: v_entry=%.4f a_entry=%.4f block_count=%d max_left=%d\n",
-           v_left_entry, a_left_entry, block_count, max_left_compatible);
-    printf("  backward pass max_safe_entry_to_unmerged_tail:");
-    for (uint8_t i = 0; i <= block_count; i++) printf(" [%d]=%.2f", i, max_safe_entry_to_unmerged_tail[i]);
-    printf("\n");
-    printf("  blocks: ");
-    for (uint8_t i = 0; i < block_count; i++) printf(" [%d]{mm=%.2f nom=%.0f amax=%.0f vj=%.0f}", i, mm[i], nominal[i], accel[i], vmax_junction[i]);
-    printf("\n");
-  #endif
-
-  // ─── Trajectory reuse: skip replanning when previous merge is still valid ───
+  // ─── Backward pass with integrated reuse check ───
   //
-  // The previous planNext() planned a multi-block trajectory [0..prev_left_end),
-  // then truncated to block 0. After consuming block 0, blocks [1..prev_left_end-1)
-  // become [0..prev_left_end-2) of the new buffer. If the backward pass at the
-  // junction hasn't improved, we can advance within the saved trajectory.
-  if (prev_traj_state.valid && prev_left_end > 2) {
-    uint8_t reuse_left_end = prev_left_end - 1;
-    if (reuse_left_end >= max_left_compatible && block_count >= reuse_left_end) {
-      // The backward pass already ran above. Check the junction value.
-      float v_junction_new = _MIN(max_safe_entry_to_unmerged_tail[reuse_left_end],
-                                  _MIN(nominal[0], vmax_junction[reuse_left_end]));
+  // Compute max feasible entry speed for [i..N) assuming per-block (unmerged) planning.
+  // NOT valid for merged trajectories — merging has more distance and can safely exceed these.
+  //
+  // When a previous trajectory is available for reuse, we check at the reuse junction
+  // (i == reuse_left_end) whether the backward pass value has improved. If not, we can
+  // stop the backward pass early and reuse the previous trajectory — skipping both the
+  // remaining backward pass iterations AND the entire try_left_end loop.
+  float max_safe_entry_to_unmerged_tail[BLOCK_BUFFER_SIZE + 1];
+  max_safe_entry_to_unmerged_tail[block_count] = 0.0f;
 
+  // Reuse candidate (0 = no reuse possible)
+  uint8_t reuse_left_end = 0;
+  if (prev_traj_state.valid && prev_left_end > 2
+      && block_count >= prev_left_end - 1
+      && prev_left_end - 1 >= max_left_compatible) {
+    reuse_left_end = prev_left_end - 1;
+  }
+
+  bool reused = false;
+  for (int8_t i = block_count - 1; i > 0; i--) {
+    float safe;
+    if (buffer_full && i == block_count - 1) {
+      float cap = _MIN(nominal[i], vmax_junction[i]);
+      safe = cj_maxSafeEntryForAnyExit(mm[i], cap, j_max, accel[i]);
+    } else {
+      safe = maxReachableSpeed(max_safe_entry_to_unmerged_tail[i + 1], mm[i], _MIN(nominal[i], vmax_junction[i]), accel[i], j_max);
+    }
+    max_safe_entry_to_unmerged_tail[i] = safe;
+
+    // Check reuse at the junction point — stop backward pass early if unchanged
+    if (reuse_left_end > 0 && i == (int8_t)reuse_left_end) {
+      float v_junction_new = _MIN(safe, _MIN(nominal[0], vmax_junction[reuse_left_end]));
       if (v_junction_new <= prev_v_junction * 1.001f + 0.01f) {
-        // Junction unchanged (within tolerance) → reuse previous trajectory
-        // Restore the pre-truncation trajectory and advance past consumed block 0.
-        traj.restorePreTruncation(
-          prev_traj_state);
+        // Junction unchanged → reuse previous trajectory
+        traj.restorePreTruncation(prev_traj_state);
         traj.advancePastDistance(prev_mm_block0);
 
-        // Save the advanced-but-untruncated state for potential chained reuse
         if (reuse_left_end > 1) {
           traj.savePreTruncation(prev_traj_state);
           prev_mm_block0 = mm[0];
@@ -154,19 +144,33 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
         orig_block_end_dist = mm[0];
 
         #ifdef CJ_DEBUG
-          printf("  REUSE: left_end=%d v_junction=%.4f v_exit=%.4f a_exit=%.4f\n",
-                 reuse_left_end, v_junction_new, v_exit_stored, a_exit_stored);
+          printf("  REUSE: left_end=%d v_junction=%.4f v_exit=%.4f a_exit=%.4f (stopped backward pass at i=%d of %d)\n",
+                 reuse_left_end, v_junction_new, v_exit_stored, a_exit_stored, i, block_count);
         #endif
-        return true;
+        reused = true;
+        break;
       }
       #ifdef CJ_DEBUG
       else {
-        printf("  reuse rejected: v_junction_new=%.4f > prev_v_junction=%.4f * 1.001\n",
-               v_junction_new, prev_v_junction);
+        printf("  reuse rejected at i=%d: v_junction_new=%.4f > prev_v_junction=%.4f * 1.001\n",
+               i, v_junction_new, prev_v_junction);
       }
       #endif
+      reuse_left_end = 0;  // Don't check again
     }
   }
+  if (reused) return true;
+
+  #ifdef CJ_DEBUG
+    printf("  planNext: v_entry=%.4f a_entry=%.4f block_count=%d max_left=%d\n",
+           v_left_entry, a_left_entry, block_count, max_left_compatible);
+    printf("  backward pass max_safe_entry_to_unmerged_tail:");
+    for (uint8_t i = 0; i <= block_count; i++) printf(" [%d]=%.2f", i, max_safe_entry_to_unmerged_tail[i]);
+    printf("\n");
+    printf("  blocks: ");
+    for (uint8_t i = 0; i < block_count; i++) printf(" [%d]{mm=%.2f nom=%.0f amax=%.0f vj=%.0f}", i, mm[i], nominal[i], accel[i], vmax_junction[i]);
+    printf("\n");
+  #endif
 
   // ─── Left_end selection (largest feasible, backward pass only) ───
   //
