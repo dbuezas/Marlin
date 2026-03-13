@@ -236,7 +236,10 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
           // If v_absorbed > v_original_target, the absorption exits too fast for
           // the unmerged tail — don't use it.
           float v_absorbed = v_left_entry + a_left_entry * fabsf(a_left_entry) / (2.0f * j_max);
-          if (v_absorbed > 0.01f && v_absorbed <= v_original_target + 0.5f) {
+          // Allow tiny float-precision overshoot (0.01) but not more —
+          // v_absorbed > v_original_target means the absorption exits too fast
+          // for the unmerged tail.
+          if (v_absorbed > 0.01f && v_absorbed <= v_original_target + 0.01f) {
             ok = traj.plan_full(v_left_entry, v_absorbed, a_left, j_max, dist_left,
                                  nominal[0], a_left_entry);
             if (ok) {
@@ -269,8 +272,8 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
         float v_absorbed = v_left_entry + a_left_entry * fabsf(a_left_entry) / (2.0f * j_max);
         float v_limit = _MIN(nominal[0], vmax_junction[1]);
         float ve_hi = _MIN(v_absorbed, v_limit);
-        if (ve_hi > v_original_target && ve_hi > 0.1f
-            && v_current_exit < v_original_target - 0.1f) {
+        if (ve_hi > v_original_target && ve_hi > 0.01f
+            && v_current_exit < v_original_target - 0.01f) {
           float ve_lo = v_original_target, ve_best = 0.0f;
           for (int iter = 0; iter < 24; iter++) {
             float ve_mid = 0.5f * (ve_lo + ve_hi);
@@ -285,8 +288,12 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
               traj.plan_full(v_left_entry, ve_best, a_left, j_max, dist_left,
                               nominal[0], a_left_entry)) {
             float ve_actual = traj.getVelocityAtTime(traj.getTotalDuration());
+            // Upward bisection finds ve_best ∈ [v_original_target, ve_hi].
+            // ve_actual ≈ ve_best, so it's inherently above v_original_target.
+            // Allow compound float imprecision (bisection + plan_full + query)
+            // but not a real overshoot that would endanger the tail.
             if (ve_actual >= v_current_exit - 0.01f
-                && ve_actual <= v_original_target + 0.5f) {
+                && ve_actual <= v_original_target + 0.05f) {
               v_target = ve_best;
               used = true;
               #ifdef CJ_DEBUG
@@ -310,7 +317,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
       // Only triggers when v=0 plan under-exits (losing speed unnecessarily).
       if (v_target < 0.01f && block_count > 1 && v_original_target > 0.01f) {
         float v_current_exit = traj.getVelocityAtTime(traj.getTotalDuration());
-        if (v_current_exit < v_original_target - 0.1f) {
+        if (v_current_exit < v_original_target - 0.01f) {
           float ve_lo = 0.0f, ve_hi = v_original_target, ve_best = 0.0f;
           for (int iter = 0; iter < 24; iter++) {
             float ve_mid = 0.5f * (ve_lo + ve_hi);
@@ -328,9 +335,11 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
             float dur = traj.getTotalDuration();
             // Validate: exit must not have near-zero dip before the end
             float v_near = (dur > 0.001f) ? traj.getVelocityAtTime(dur - 0.001f) : ve_actual;
+            // Downward bisection has ve_best ≤ v_original_target by construction.
+            // Allow tiny float precision overshoot from plan_full.
             if (ve_actual > v_current_exit + 0.01f
-                && ve_actual <= v_original_target + 0.5f
-                && fabsf(v_near - ve_actual) < _MAX(0.5f, ve_actual * 0.5f)) {
+                && ve_actual <= v_original_target + 0.01f
+                && fabsf(v_near - ve_actual) < _MAX(0.2f, ve_actual * 0.5f)) {
               v_target = ve_best;
               used = true;
               #ifdef CJ_DEBUG
