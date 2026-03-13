@@ -564,6 +564,65 @@ public:
     total_duration = 0.0f;
   }
 
+  // ─── Trajectory reuse: save/restore pre-truncation state ───
+
+  void savePreTruncation(CJTrajectorySnapshot& state) const {
+    for (int i = 0; i < 7; i++) state.phase_dt[i] = phase_dt[i];
+    state.v_entry = v_entry;
+    state.a_entry = a_entry;
+    state.v_exit = v_exit;
+    state.a_exit = a_exit;
+    state.a_max = a_max;
+    state.j_max = j_max;
+    state.dist_total = dist_total;
+    state.total_duration = total_duration;
+    state.valid = true;
+  }
+
+  void restorePreTruncation(const CJTrajectorySnapshot& state) {
+    for (int i = 0; i < 7; i++) phase_dt[i] = state.phase_dt[i];
+    v_entry = state.v_entry;
+    a_entry = state.a_entry;
+    v_exit = state.v_exit;
+    a_exit = state.a_exit;
+    a_max = state.a_max;
+    j_max = state.j_max;
+    dist_total = state.dist_total;
+    total_duration = state.total_duration;
+    buildPhaseCache();
+  }
+
+  // Remove the first `d` mm from the trajectory, shifting the origin.
+  // After this call, the trajectory starts at the state that was previously at distance d.
+  void advancePastDistance(float d) {
+    if (d <= 0.0f) return;
+    if (d >= dist_total) {
+      // Entire trajectory consumed — degenerate
+      v_entry = v_exit;
+      a_entry = a_exit;
+      dist_total = 0.0f;
+      total_duration = 0.0f;
+      for (int i = 0; i < 7; i++) phase_dt[i] = 0.0f;
+      buildPhaseCache();
+      return;
+    }
+    const float t_cut = getTimeAtDistance(d);
+    const int ph = findPhase(t_cut);
+    const float dt_in = t_cut - phase_start_time[ph];
+
+    // New entry state at the cut point
+    v_entry = phase_start_v[ph] + phase_start_a[ph] * dt_in + 0.5f * phaseJerk(ph) * dt_in * dt_in;
+    a_entry = phase_start_a[ph] + phaseJerk(ph) * dt_in;
+
+    // Zero out fully consumed phases, shorten the cut phase
+    for (int i = 0; i < ph; i++) phase_dt[i] = 0.0f;
+    phase_dt[ph] -= dt_in;
+
+    dist_total -= d;
+    total_duration -= t_cut;
+    buildPhaseCache();
+  }
+
   // Delegate accessors to the planner
   ConstantJerkBlockPlanner& planner() { return planner_; }
   uint8_t bufferConsumed() const { return planner_.bufferConsumed(); }

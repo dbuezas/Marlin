@@ -112,6 +112,62 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     printf("\n");
   #endif
 
+  // ─── Trajectory reuse: skip replanning when previous merge is still valid ───
+  //
+  // The previous planNext() planned a multi-block trajectory [0..prev_left_end),
+  // then truncated to block 0. After consuming block 0, blocks [1..prev_left_end-1)
+  // become [0..prev_left_end-2) of the new buffer. If the backward pass at the
+  // junction hasn't improved, we can advance within the saved trajectory.
+  if (prev_traj_state.valid && prev_left_end > 2) {
+    uint8_t reuse_left_end = prev_left_end - 1;
+    if (reuse_left_end >= max_left_compatible && block_count >= reuse_left_end) {
+      // The backward pass already ran above. Check the junction value.
+      float v_junction_new = _MIN(max_safe_entry_to_unmerged_tail[reuse_left_end],
+                                  _MIN(nominal[0], vmax_junction[reuse_left_end]));
+
+      if (v_junction_new <= prev_v_junction * 1.001f + 0.01f) {
+        // Junction unchanged (within tolerance) → reuse previous trajectory
+        // Restore the pre-truncation trajectory and advance past consumed block 0.
+        traj.restorePreTruncation(
+          prev_traj_state);
+        traj.advancePastDistance(prev_mm_block0);
+
+        // Save the advanced-but-untruncated state for potential chained reuse
+        if (reuse_left_end > 1) {
+          traj.savePreTruncation(prev_traj_state);
+          prev_mm_block0 = mm[0];
+        } else {
+          prev_traj_state.valid = false;
+        }
+
+        traj.truncateToDistance(mm[0]);
+        v_exit_stored = traj.getExitSpeed();
+        a_exit_stored = traj.getExitAccel();
+
+        prev_left_end = reuse_left_end;
+        prev_v_junction = v_junction_new;
+
+        orig_block_index = 0;
+        orig_block_start_dist = 0;
+        group_block_count = 1;
+        group_buffer_consumed = buf_offset[0] + 1;
+        orig_block_end_dist = mm[0];
+
+        #ifdef CJ_DEBUG
+          printf("  REUSE: left_end=%d v_junction=%.4f v_exit=%.4f a_exit=%.4f\n",
+                 reuse_left_end, v_junction_new, v_exit_stored, a_exit_stored);
+        #endif
+        return true;
+      }
+      #ifdef CJ_DEBUG
+      else {
+        printf("  reuse rejected: v_junction_new=%.4f > prev_v_junction=%.4f * 1.001\n",
+               v_junction_new, prev_v_junction);
+      }
+      #endif
+    }
+  }
+
   // ─── Left_end selection (largest feasible, backward pass only) ───
   //
   // For each candidate left_end, v_junction = max_safe_entry_to_unmerged_tail[left_end]
@@ -421,6 +477,17 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     }
   }
   #endif
+
+  // Save pre-truncation trajectory for potential reuse in next planNext call.
+  // Only save when merging (best_left_end > 1) — single blocks have nothing to reuse.
+  if (best_left_end > 1) {
+    traj.savePreTruncation(
+      prev_traj_state);
+    prev_mm_block0 = mm[0];
+  } else {
+    prev_traj_state.valid = false;
+  }
+
   traj.truncateToDistance(mm[0]);
 
   v_exit_stored = traj.getExitSpeed();

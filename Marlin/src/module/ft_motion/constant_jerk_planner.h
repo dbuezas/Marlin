@@ -83,6 +83,18 @@
 
 class ConstantJerkTrajectoryGenerator;  // Forward declaration
 
+// Pre-truncation trajectory state for reuse optimization.
+// Shared between ConstantJerkBlockPlanner and ConstantJerkTrajectoryGenerator.
+struct CJTrajectorySnapshot {
+  float phase_dt[7] = {};
+  float v_entry = 0, a_entry = 0;
+  float v_exit = 0, a_exit = 0;
+  float a_max = 0, j_max = 0;
+  float dist_total = 0;
+  float total_duration = 0;
+  bool valid = false;
+};
+
 static float sumDist(const float* mm_arr,  uint8_t from, uint8_t to) {
   float total = 0;
   for (uint8_t i = from; i < to; i++) total += mm_arr[i];
@@ -113,6 +125,8 @@ class ConstantJerkBlockPlanner {
     a_exit_stored = 0;
     prev_left_end = 0;
     prev_v_junction = 0;
+    prev_traj_state.valid = false;
+    prev_mm_block0 = 0;
   }
 
   /**
@@ -161,4 +175,10 @@ class ConstantJerkBlockPlanner {
   // because the previous trajectory already proved it.
   uint8_t prev_left_end = 0;
   float prev_v_junction = 0;
+
+  // Trajectory reuse: pre-truncation state from previous planNext call.
+  // When the backward pass at the reuse junction hasn't improved, we can
+  // advance within the previous trajectory instead of replanning.
+  CJTrajectorySnapshot prev_traj_state;
+  float prev_mm_block0 = 0;  // distance of block 0 that was consumed
 };
