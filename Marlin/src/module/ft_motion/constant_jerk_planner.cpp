@@ -459,34 +459,23 @@ float ConstantJerkBlockPlanner::maxReachableSpeed(float v_from, float dist_total
     // Initial guess: midpoint (trapezoidal inverse is complex with a_entry)
     float v_peak = 0.5f * (v_lo + hi);
 
-    // Newton: f(v_peak) = cj_rampDistWithA(v_from, v_peak, ..., a_entry) - dist_total = 0
+    // Bracketed Newton: maintains [v_lo, hi] bracket.
+    // Uses Newton when step stays in bracket, bisects otherwise.
     for (int i = 0; i < 10; i++) {
-      if (v_peak <= v_lo) { v_peak = v_lo + 0.001f; }
+      if (v_peak <= v_lo) v_peak = v_lo + 0.001f;
       const float f = cj_rampDistWithA(v_from, v_peak, j_max, a_max, a_entry) - dist_total;
-      const float fp = cj_rampDistWithADeriv(v_from, v_peak, j_max, a_max, a_entry);
-      if (fp < 1e-10f) break;
-      const float step = f / fp;
-      v_peak -= step;
-      if (v_peak < v_lo) v_peak = v_lo;
-      if (v_peak > hi) v_peak = hi;
+      if (f <= 0.0f) v_lo = v_peak; else hi = v_peak;
       if (f <= 0.0f && f > -0.01f) break;
-      if (step < 0.001f && step > -0.001f) break;
-    }
-
-    // Guarantee: returned speed is conservative (ramp fits in distance).
-    v_peak = _MIN(v_peak, hi);
-    if (v_peak > v_lo && cj_rampDistWithA(v_from, v_peak, j_max, a_max, a_entry) > dist_total) {
-      float v_hi = v_peak;
-      for (int i = 0; i < 10; i++) {
-        float mid = 0.5f * (v_lo + v_hi);
-        if (cj_rampDistWithA(v_from, mid, j_max, a_max, a_entry) <= dist_total)
-          v_lo = mid;
-        else
-          v_hi = mid;
+      if (hi - v_lo < 0.001f) break;
+      const float fp = cj_rampDistWithADeriv(v_from, v_peak, j_max, a_max, a_entry);
+      if (fp > 1e-10f) {
+        v_peak -= f / fp;
+        if (v_peak <= v_lo || v_peak >= hi) v_peak = 0.5f * (v_lo + hi);
+      } else {
+        v_peak = 0.5f * (v_lo + hi);
       }
-      v_peak = v_lo;
     }
-    return _MIN(v_peak, v_max);
+    return _MIN(v_lo, v_max);
   }
 
   // ─── a_entry == 0: fast path with closed-form cj_rampDist ───
@@ -506,34 +495,23 @@ float ConstantJerkBlockPlanner::maxReachableSpeed(float v_from, float dist_total
     v_peak = hi;
   }
 
-  // Newton: f(v_peak) = cj_rampDist(v_from, v_peak) - dist_total = 0
+  // Bracketed Newton: maintains [v_from, hi] bracket.
+  float v_lo = v_from;
   for (int i = 0; i < 10; i++) {
-    if (v_peak <= v_from) { v_peak = v_from + 0.001f; }
+    if (v_peak <= v_lo) v_peak = v_lo + 0.001f;
     const float f = cj_rampDist(v_from, v_peak, j_max, a_max) - dist_total;
+    if (f <= 0.0f) v_lo = v_peak; else hi = v_peak;
+    if (f <= 0.0f && f > -0.01f) break;
+    if (hi - v_lo < 0.001f) break;
     const float fp = cj_rampDistDeriv(v_from, v_peak, j_max, a_max);
-    if (fp < 1e-10f) break;
-    const float step = f / fp;
-    v_peak -= step;
-    if (v_peak < v_from) v_peak = v_from;
-    if (v_peak > hi) v_peak = hi;
-    if (f <= 0.0f && f > -0.01f) break; // close enough, conservative
-    if (step < 0.001f && step > -0.001f) break;
-  }
-  // Guarantee: returned speed is conservative (ramp fits in distance).
-  // Newton may converge slightly above the root; bisect down if needed.
-  v_peak = _MIN(v_peak, hi);
-  if (v_peak > v_from && cj_rampDist(v_from, v_peak, j_max, a_max) > dist_total) {
-    float v_lo = v_from, v_hi = v_peak;
-    for (int i = 0; i < 10; i++) {
-      float mid = 0.5f * (v_lo + v_hi);
-      if (cj_rampDist(v_from, mid, j_max, a_max) <= dist_total)
-        v_lo = mid;
-      else
-        v_hi = mid;
+    if (fp > 1e-10f) {
+      v_peak -= f / fp;
+      if (v_peak <= v_lo || v_peak >= hi) v_peak = 0.5f * (v_lo + hi);
+    } else {
+      v_peak = 0.5f * (v_lo + hi);
     }
-    v_peak = v_lo;
   }
-  return v_peak;
+  return v_lo;
 }
 
 #endif // FTM_CONSTANT_JERK

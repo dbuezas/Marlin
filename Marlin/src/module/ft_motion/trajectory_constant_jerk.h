@@ -597,33 +597,23 @@ private:
         v_peak = 0.5f * (v_lo + v_hi);
       }
 
-      // Newton: f(v_peak) = totalRampDist(v_peak) - dist_total = 0
+      // Bracketed Newton: maintains [v_lo, v_hi] bracket.
+      // Uses Newton when step stays in bracket, bisects otherwise.
       for (int i = 0; i < 10; i++) {
         if (v_peak <= v_lo) v_peak = v_lo + 0.001f;
         const float f = cj_totalRampDistCF(v_entry, v_exit, v_peak, j_max, a_max, a_entry) - dist_total;
-        const float fp = cj_totalRampDistCFDeriv(v_entry, v_exit, v_peak, j_max, a_max, a_entry);
-        if (fp < 1e-10f) break;
-        const float step = f / fp;
-        v_peak -= step;
-        if (v_peak < v_lo) v_peak = v_lo;
-        if (v_peak > v_hi) v_peak = v_hi;
+        if (f <= 0.0f) v_lo = v_peak; else v_hi = v_peak;
         if (f <= 0.0f && f > -0.01f) break;
-        if (step < 0.001f && step > -0.001f) break;
-      }
-
-      // Guarantee: conservative (ramp fits in distance). Bisect if Newton overshot.
-      v_peak = _MIN(v_peak, v_hi);
-      if (v_peak > v_lo && cj_totalRampDistCF(v_entry, v_exit, v_peak, j_max, a_max, a_entry) > dist_total) {
-        float v_bhi = v_peak;
-        for (int i = 0; i < 10; i++) {
-          float mid = 0.5f * (v_lo + v_bhi);
-          if (cj_totalRampDistCF(v_entry, v_exit, mid, j_max, a_max, a_entry) <= dist_total)
-            v_lo = mid;
-          else
-            v_bhi = mid;
+        if (v_hi - v_lo < 0.001f) break;
+        const float fp = cj_totalRampDistCFDeriv(v_entry, v_exit, v_peak, j_max, a_max, a_entry);
+        if (fp > 1e-10f) {
+          v_peak -= f / fp;
+          if (v_peak <= v_lo || v_peak >= v_hi) v_peak = 0.5f * (v_lo + v_hi);
+        } else {
+          v_peak = 0.5f * (v_lo + v_hi);
         }
-        v_peak = v_lo;
       }
+      v_peak = v_lo;
     }
 
     float t1, t2, t3, t4 = 0, t5, t6, t7;
