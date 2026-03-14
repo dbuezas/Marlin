@@ -53,7 +53,7 @@
  *   transitions than forcing a=0 at every block boundary.
  *
  *   When a_entry is infeasible for plan_full (e.g., too high for the
- *   available distance), plan_full falls back to a_entry=0 automatically.
+ *   available distance), the planner retries with lower targets or v=0.
  *
  * ─── Backward pass ───
  *
@@ -95,14 +95,14 @@ struct CJTrajectorySnapshot {
   bool valid = false;
 };
 
-static float sumDist(const float* mm_arr, uint8_t from, uint8_t to) {
+static inline float sumDist(const float* mm_arr, uint8_t from, uint8_t to) {
   float total = 0;
   for (uint8_t i = from; i < to; i++) total += mm_arr[i];
   return total;
 }
 
 // Minimum value in arr[from..to-1]
-static float minVal(const float* arr, uint8_t from, uint8_t to) {
+static inline float minVal(const float* arr, uint8_t from, uint8_t to) {
   float v = arr[from];
   for (uint8_t i = from + 1; i < to; i++) v = _MIN(v, arr[i]);
   return v;

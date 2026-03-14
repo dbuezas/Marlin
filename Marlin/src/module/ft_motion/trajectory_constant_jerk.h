@@ -30,8 +30,8 @@
  * Constant-jerk (7-phase S-curve) trajectory generator.
  *
  * Phases: [+jerk, cruise_accel, -jerk, cruise_velocity, -jerk, cruise_decel, +jerk]
- * All junctions have a=0 (no non-zero boundary accelerations).
- * Uses binary search to find feasible peak velocity.
+ * Supports non-zero boundary accelerations (a_entry carried across blocks).
+ * Uses bracketed Newton to find feasible peak velocity.
  */
 
 // Simulate one phase of motion with constant jerk
@@ -378,7 +378,7 @@ public:
   // Jerk comes from cfg.jerk_max, passed through by the caller.
   // Returns false if infeasible (ramp between v0 and v1 exceeds distance).
   // a_entry_in: initial acceleration at v_entry (default 0). Non-zero when
-  //   replanning mid-superblock with Proposal B (carry exit accel from previous block).
+  //   carrying exit acceleration from the previous block's truncation point.
   bool plan_full(float v_entry_in, float v_exit_in,
                  float a_max_in, float j_max_in,
                  float dist_total_in, float v_nominal,
@@ -629,6 +629,7 @@ public:
   uint8_t blockCount() const { return planner_.blockCount(); }
   uint8_t currentBlockIndex() const { return planner_.currentBlockIndex(); }
 
+  #ifdef CJ_DEBUG
   void dumpPhases(const char* prefix = "") const {
     printf("%s  v_entry=%.4f v_exit=%.4f a_entry=%.4f a_exit=%.4f j_max=%.1f a_max=%.1f dist=%.6f dur=%.6f\n",
            prefix, v_entry, v_exit, a_entry, a_exit, j_max, a_max, dist_total, total_duration);
@@ -639,6 +640,7 @@ public:
              phase_start_time[i], phase_start_v[i], phase_start_a[i], phase_start_pos[i]);
     }
   }
+  #endif
 
 private:
   // Strategy 1: Standard 7-phase trajectory [+j, 0, -j, cruise, -j, 0, +j].
@@ -834,7 +836,7 @@ private:
   float* jerk_max_ptr_ = nullptr;
 
   float v_entry = 0, v_exit = 0;
-  float a_entry = 0;  // initial acceleration (non-zero for Proposal B replanning)
+  float a_entry = 0;  // initial acceleration (non-zero when carried from previous block)
   float a_exit = 0;   // exit acceleration (non-zero after truncateToDistance)
   float a_max = 0, j_max = 0, dist_total = 0;
   float total_duration = 0;

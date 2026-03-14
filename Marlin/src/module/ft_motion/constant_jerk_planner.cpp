@@ -58,7 +58,6 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
     block_count++;
   }
   if (block_count == 0) {
-    SERIAL_ECHOLNPGM("CJ ERROR: block_count=", block_count);
     traj.reset();
     return false;
   }
@@ -452,7 +451,9 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   #endif
 
   if (best_left_end == 0) {
-    SERIAL_ECHOLNPGM("CJ ERROR: no feasible left_end, v=", v_left_entry, " a=", a_left_entry);
+    #ifdef CJ_DEBUG
+      printf("CJ ERROR: no feasible left_end, v=%.4f a=%.4f\n", v_left_entry, a_left_entry);
+    #endif
     traj.reset();
     return false;
   }
