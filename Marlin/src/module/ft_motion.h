@@ -30,8 +30,8 @@
   #include "ft_motion/trajectory_poly5.h"
   #include "ft_motion/trajectory_poly6.h"
 #endif
-#if ENABLED(FTM_CONSTANT_JERK)
-  #include "ft_motion/trajectory_constant_jerk.h"
+#if ENABLED(FTM_CONSTANT_JOLT)
+  #include "ft_motion/trajectory_constant_jolt.h"
 #endif
 #if ENABLED(FTM_RESONANCE_TEST)
   #include "ft_motion/resonance_generator.h"
@@ -102,13 +102,13 @@ typedef struct FTConfig {
   #else
     static constexpr TrajectoryType trajectory_type = TrajectoryType::TRAPEZOIDAL;
   #endif
-  #if ENABLED(FTM_CONSTANT_JERK)
-    float jerk_max = FTM_DEFAULT_JERK_MAX;    // (mm/s³) Maximum jerk for constant-jerk trajectory
+  #if ENABLED(FTM_CONSTANT_JOLT)
+    float jolt_max = FTM_DEFAULT_JOLT_MAX;    // (mm/s³) Maximum jolt for constant-jolt trajectory
 
-    void set_jerkMax(float j) {
+    void set_joltMax(float j) {
       NOLESS(j, 1000.0f);
       prep_for_shaper_change();
-      jerk_max = j;
+      jolt_max = j;
     }
   #endif
 
@@ -241,7 +241,7 @@ typedef struct FTConfig {
     #endif // HAS_FTM_SHAPING
 
     TERN_(FTM_POLYS, poly6_acceleration_overshoot = FTM_POLY6_ACCELERATION_OVERSHOOT);
-    TERN_(FTM_CONSTANT_JERK, jerk_max = FTM_DEFAULT_JERK_MAX);
+    TERN_(FTM_CONSTANT_JOLT, jolt_max = FTM_DEFAULT_JOLT_MAX);
 
     update_shaping_params();
   }
@@ -263,8 +263,8 @@ class FTMotion {
     static ft_config_t cfg;
     static bool busy;
 
-    #if ENABLED(FTM_CONSTANT_JERK)
-      static ConstantJerkTrajectoryGenerator cjGenerator;
+    #if ENABLED(FTM_CONSTANT_JOLT)
+      static ConstantJoltTrajectoryGenerator cjGenerator;
     #endif
 
     static void set_defaults() {

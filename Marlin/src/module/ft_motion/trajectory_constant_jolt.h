@@ -22,19 +22,19 @@
 #pragma once
 
 
-#include "constant_jerk_planner.h"
+#include "constant_jolt_planner.h"
 #include "trajectory_generator.h"
 #include <math.h>
 
 /**
- * Constant-jerk (7-phase S-curve) trajectory generator.
+ * Constant-jolt (7-phase S-curve) trajectory generator.
  *
- * Phases: [+jerk, cruise_accel, -jerk, cruise_velocity, -jerk, cruise_decel, +jerk]
+ * Phases: [+jolt, cruise_accel, -jolt, cruise_velocity, -jolt, cruise_decel, +jolt]
  * Supports non-zero boundary accelerations (a_entry carried across blocks).
  * Uses bracketed Newton to find feasible peak velocity.
  */
 
-// Simulate one phase of motion with constant jerk
+// Simulate one phase of motion with constant jolt
 static inline void cj_simulatePhase(float j_phase, float dt, float &v, float &a, float &dist) {
   if (dt <= 0.0f) return;
   dist += v * dt + 0.5f * a * dt * dt + (1.0f / 6.0f) * j_phase * dt * dt * dt;
@@ -48,7 +48,7 @@ static inline void cj_simulatePhase(float j_phase, float dt, float &v, float &a,
 //   For accel: phases are [+j from a_start to a_peak, hold at a_peak, -j from a_peak to 0]
 //   For decel: a_start is ignored (decel always starts from a=0 at v_peak)
 static inline float cj_planRamp(float v_start, float v_peak, float j_max, float a_max,
-                                bool decel, float &dt_jerk1, float &dt_hold, float &dt_jerk2,
+                                bool decel, float &dt_jolt1, float &dt_hold, float &dt_jolt2,
                                 float a_start = 0.0f) {
   float dv = v_peak - v_start;
   float a_peak_sq = j_max * dv + 0.5f * a_start * a_start;
@@ -59,39 +59,39 @@ static inline float cj_planRamp(float v_start, float v_peak, float j_max, float 
       // the ramp just absorbs the existing negative acceleration.
       a_peak_sq = 0;
     } else {
-      dt_jerk1 = dt_hold = dt_jerk2 = 0;
+      dt_jolt1 = dt_hold = dt_jolt2 = 0;
       return 0;
     }
   }
   float a_peak = SQRT(a_peak_sq);
 
   if (a_peak <= a_max) {
-    dt_jerk1 = (a_peak - a_start) / j_max;
+    dt_jolt1 = (a_peak - a_start) / j_max;
     dt_hold = 0;
-    dt_jerk2 = a_peak / j_max;
+    dt_jolt2 = a_peak / j_max;
   }
   else if (!decel && a_start > a_max) {
     // a_start already exceeds a_max (inherited from previous trajectory truncation).
     // Can't use +j phase to go higher. Hold at a_start, then -j to 0.
-    dt_jerk1 = 0;
-    dt_jerk2 = a_start / j_max;
-    float dv_jerk2 = a_start * a_start / (2.0f * j_max);
-    dt_hold = _MAX(0.0f, (dv - dv_jerk2) / a_start);
+    dt_jolt1 = 0;
+    dt_jolt2 = a_start / j_max;
+    float dv_jolt2 = a_start * a_start / (2.0f * j_max);
+    dt_hold = _MAX(0.0f, (dv - dv_jolt2) / a_start);
   }
   else {
-    dt_jerk1 = (a_max - a_start) / j_max;
-    dt_jerk2 = a_max / j_max;
+    dt_jolt1 = (a_max - a_start) / j_max;
+    dt_jolt2 = a_max / j_max;
     float dv_no_hold = (2.0f * a_max * a_max - a_start * a_start) / (2.0f * j_max);
     dt_hold = _MAX(0.0f, (dv - dv_no_hold) / a_max);
   }
 
-  float jk = decel ? -j_max : j_max;
+  float jl = decel ? -j_max : j_max;
   float v = decel ? v_peak : v_start;
   float a_v = decel ? 0.0f : a_start;
   float dist = 0;
-  cj_simulatePhase(jk, dt_jerk1, v, a_v, dist);
+  cj_simulatePhase(jl, dt_jolt1, v, a_v, dist);
   cj_simulatePhase(0, dt_hold, v, a_v, dist);
-  cj_simulatePhase(-jk, dt_jerk2, v, a_v, dist);
+  cj_simulatePhase(-jl, dt_jolt2, v, a_v, dist);
   return dist;
 }
 
@@ -99,15 +99,15 @@ static inline float cj_planRamp(float v_start, float v_peak, float j_max, float 
 // Phases: [-j, 0, +j]. a_start <= 0 (already decelerating) or 0.
 // Returns distance consumed, or -1 if infeasible (|a_start| exceeds the
 // triangular peak — the -j phase would push acceleration further from zero).
-// Sets dt_jerk1 (phase4), dt_hold (phase5), dt_jerk2 (phase6).
+// Sets dt_jolt1 (phase4), dt_hold (phase5), dt_jolt2 (phase6).
 static inline float cj_planDecelRampWithA(
     float v_start, float v_end, float j_max, float a_max,
-    float &dt_jerk1, float &dt_hold, float &dt_jerk2,
+    float &dt_jolt1, float &dt_hold, float &dt_jolt2,
     float a_start = 0.0f) {
   const float dv = v_start - v_end;  // total velocity to shed
   // The previous cycle may have used a higher a_max, so |a_start| can
   // exceed this block's a_max. Honor it — the acceleration already
-  // happened. Without this, dt_jerk1 goes negative and the clamp
+  // happened. Without this, dt_jolt1 goes negative and the clamp
   // produces distorted ramp shapes.
   a_max = _MAX(a_max, fabsf(a_start));
   // a_peak² = (a_start² + 2·j·dv) / 2
@@ -119,21 +119,21 @@ static inline float cj_planDecelRampWithA(
     // Already decelerating significantly harder than the triangular peak.
     // The -j phase would push a even more negative — infeasible.
     // Tolerance (1% relative + 1.0 absolute) avoids false negatives from
-    // float precision when |a_start| ≈ a_peak (dt_jerk1 ≈ 0, ramp still works).
-    dt_jerk1 = dt_hold = dt_jerk2 = 0.0f;
+    // float precision when |a_start| ≈ a_peak (dt_jolt1 ≈ 0, ramp still works).
+    dt_jolt1 = dt_hold = dt_jolt2 = 0.0f;
     return -1.0f;
   }
 
   if (a_peak <= a_max) {
     // Triangular: no hold phase
-    dt_jerk1 = (a_start + a_peak) / j_max;
+    dt_jolt1 = (a_start + a_peak) / j_max;
     dt_hold = 0.0f;
-    dt_jerk2 = a_peak / j_max;
+    dt_jolt2 = a_peak / j_max;
   } else {
     // Trapezoidal: a_peak clamped to a_max
     a_peak = a_max;
-    dt_jerk1 = (a_start + a_max) / j_max;
-    dt_jerk2 = a_max / j_max;
+    dt_jolt1 = (a_start + a_max) / j_max;
+    dt_jolt2 = a_max / j_max;
     float dv_no_hold = (a_start * a_start - 2.0f * a_max * a_max) / (2.0f * j_max);
     float dv_hold = -dv - dv_no_hold;  // remaining dv for hold phase
     dt_hold = _MAX(0.0f, -dv_hold / a_max);
@@ -141,18 +141,18 @@ static inline float cj_planDecelRampWithA(
 
   // Simulate to compute distance
   float v = v_start, a = a_start, dist = 0.0f;
-  cj_simulatePhase(-j_max, dt_jerk1, v, a, dist);
+  cj_simulatePhase(-j_max, dt_jolt1, v, a, dist);
   cj_simulatePhase(0,      dt_hold,  v, a, dist);
-  cj_simulatePhase(j_max,  dt_jerk2, v, a, dist);
+  cj_simulatePhase(j_max,  dt_jolt2, v, a, dist);
   return dist;
 }
 
 // Symmetric total ramp distance
 static inline float cj_totalRampDist(float v_peak, float v_small, float v_large,
                                      float j_max, float a_max) {
-  float dt_jerk1, dt_hold, dt_jerk2;
-  float dist_accel = cj_planRamp(v_small, v_peak, j_max, a_max, false, dt_jerk1, dt_hold, dt_jerk2);
-  float dist_decel = cj_planRamp(v_large, v_peak, j_max, a_max, true, dt_jerk1, dt_hold, dt_jerk2);
+  float dt_jolt1, dt_hold, dt_jolt2;
+  float dist_accel = cj_planRamp(v_small, v_peak, j_max, a_max, false, dt_jolt1, dt_hold, dt_jolt2);
+  float dist_decel = cj_planRamp(v_large, v_peak, j_max, a_max, true, dt_jolt1, dt_hold, dt_jolt2);
   return dist_accel + dist_decel;
 }
 
@@ -183,7 +183,7 @@ static inline float cj_rampDistDeriv(float v_start, float v_peak, float j_max, f
 
 // Closed-form ramp distance with initial acceleration (O(1), no simulation).
 // Equivalent to cj_planRamp(v_start, v_peak, j, a_max, false, ..., a_start).
-// Accel ramp: (v_start, a_start) → (v_peak, 0) with jerk +j.
+// Accel ramp: (v_start, a_start) → (v_peak, 0) with jolt +j.
 // Computes phase durations identically to cj_planRamp, then evaluates distance
 // analytically (no cj_simulatePhase calls).
 static inline float cj_rampDistWithA(float v_start, float v_peak, float j_max, float a_max,
@@ -208,8 +208,8 @@ static inline float cj_rampDistWithA(float v_start, float v_peak, float j_max, f
   else if (a_start > a_max) {
     t1 = 0.0f;
     t3 = a_start / j;
-    const float dv_jerk2 = a_start * a_start / (2.0f * j);
-    t2 = _MAX(0.0f, (dv - dv_jerk2) / a_start);
+    const float dv_jolt2 = a_start * a_start / (2.0f * j);
+    t2 = _MAX(0.0f, (dv - dv_jolt2) / a_start);
   }
   else {
     t1 = (a_max - a_start) / j;
@@ -221,20 +221,20 @@ static inline float cj_rampDistWithA(float v_start, float v_peak, float j_max, f
   // Clamp negative durations (can happen when a_start > a_peak in triangular case)
   if (t1 < 0.0f) t1 = 0.0f;
 
-  // Inline distance computation: d_phase = v*dt + 0.5*a*dt² + (jk/6)*dt³
-  // Phase 1: jerk = +j
+  // Inline distance computation: d_phase = v*dt + 0.5*a*dt² + (jl/6)*dt³
+  // Phase 1: jolt = +j
   float v = v_start, a = a_start, dist = 0.0f;
   if (t1 > 0.0f) {
     dist += v * t1 + 0.5f * a * t1 * t1 + (j / 6.0f) * t1 * t1 * t1;
     v += a * t1 + 0.5f * j * t1 * t1;
     a += j * t1;
   }
-  // Phase 2: jerk = 0
+  // Phase 2: jolt = 0
   if (t2 > 0.0f) {
     dist += v * t2 + 0.5f * a * t2 * t2;
     v += a * t2;
   }
-  // Phase 3: jerk = -j
+  // Phase 3: jolt = -j
   if (t3 > 0.0f) {
     dist += v * t3 + 0.5f * a * t3 * t3 - (j / 6.0f) * t3 * t3 * t3;
   }
@@ -315,7 +315,7 @@ static inline float cj_decelRampDistAtVelocity(
     float dist_endA, float v_endA, float dist_endB, float v_endB,
     float dist_ramp_total) {
   if (v_target >= v_endA) {
-    // Phase A: jerk=-j_max, a goes 0→-a_peak, v goes v_entry→v_endA
+    // Phase A: jolt=-j_max, a goes 0→-a_peak, v goes v_entry→v_endA
     // dist(v) = (2*v_entry + v) / 3 * sqrt(2*(v_entry - v) / j_max)
     const float dv = v_entry - v_target;
     return (dv <= 0.0f) ? 0.0f : (2.0f * v_entry + v_target) / 3.0f * SQRT(2.0f * dv / j_max);
@@ -325,28 +325,28 @@ static inline float cj_decelRampDistAtVelocity(
     // dist(v) = dist_endA + (v_endA² - v²) / (2 * a_max)
     return dist_endA + (v_endA * v_endA - v_target * v_target) / (2.0f * a_max);
   }
-  // Phase C: jerk=+j_max, a goes -a_peak→0, v goes v_endB→v_exit
+  // Phase C: jolt=+j_max, a goes -a_peak→0, v goes v_endB→v_exit
   // By time-reversal from v_exit: dist_from_end = (2*v_exit + v)/3 * sqrt(2*(v - v_exit)/j_max)
   const float dv = v_target - v_exit;
   const float dist_from_end = (dv <= 0.0f) ? 0.0f : (2.0f * v_exit + v_target) / 3.0f * SQRT(2.0f * dv / j_max);
   return dist_ramp_total - dist_from_end;
 }
 
-class ConstantJerkTrajectoryGenerator : public TrajectoryGenerator {
+class ConstantJoltTrajectoryGenerator : public TrajectoryGenerator {
 public:
-  ConstantJerkTrajectoryGenerator() = default;
+  ConstantJoltTrajectoryGenerator() = default;
 
-  // plan() delegates to the block planner. Defined in trajectory_constant_jerk.cpp.
+  // plan() delegates to the block planner. Defined in trajectory_constant_jolt.cpp.
   void plan(const float, const float, const float, const float, const float) override;
 
   // planRunout() resets planner sub-block state, then plans a zero-speed cruise.
-  // Defined in trajectory_constant_jerk.cpp.
+  // Defined in trajectory_constant_jolt.cpp.
   void planRunout(const float duration) override;
 
-  void setJerkMaxPtr(float* ptr) { jerk_max_ptr_ = ptr; }
+  void setJoltMaxPtr(float* ptr) { jolt_max_ptr_ = ptr; }
 
   // Convenience: delegates to planner_.planNext(*this, j_max).
-  // Defined in trajectory_constant_jerk.cpp.
+  // Defined in trajectory_constant_jolt.cpp.
   bool planNext(float j_max);
 
   // Plan a pure decel ramp from (v_entry, a_entry) to (v=0, a=0).
@@ -374,8 +374,8 @@ public:
     buildPhaseCache();
   }
 
-  // Plan with explicit jerk and a_max (used by the block merging planner).
-  // Jerk comes from cfg.jerk_max, passed through by the caller.
+  // Plan with explicit jolt and a_max (used by the block merging planner).
+  // Jolt comes from cfg.jolt_max, passed through by the caller.
   // Returns false if infeasible (ramp between v0 and v1 exceeds distance).
   // a_entry_in: initial acceleration at v_entry (default 0). Non-zero when
   //   carrying exit acceleration from the previous block's truncation point.
@@ -451,8 +451,8 @@ public:
     // Query v and a from phase cache (before modifying total_duration)
     const int ph = findPhase(t);
     const float dt = t - phase_start_time[ph];
-    v_exit = phase_start_v[ph] + phase_start_a[ph] * dt + 0.5f * phaseJerk(ph) * dt * dt;
-    a_exit = phase_start_a[ph] + phaseJerk(ph) * dt;
+    v_exit = phase_start_v[ph] + phase_start_a[ph] * dt + 0.5f * phaseJolt(ph) * dt * dt;
+    a_exit = phase_start_a[ph] + phaseJolt(ph) * dt;
     dist_total = d;
     total_duration = t;
   }
@@ -470,7 +470,7 @@ public:
     if (t >= total_duration) return v_exit;
     const int ph = findPhase(t);
     const float dt = t - phase_start_time[ph];
-    return phase_start_v[ph] + phase_start_a[ph] * dt + 0.5f * phaseJerk(ph) * dt * dt;
+    return phase_start_v[ph] + phase_start_a[ph] * dt + 0.5f * phaseJolt(ph) * dt * dt;
   }
 
   float getAccelerationAtTime(const float t) const {
@@ -478,17 +478,17 @@ public:
     if (t >= total_duration) return a_exit;
     const int ph = findPhase(t);
     const float dt = t - phase_start_time[ph];
-    return phase_start_a[ph] + phaseJerk(ph) * dt;
+    return phase_start_a[ph] + phaseJolt(ph) * dt;
   }
 
-  float getJerkAtTime(const float t) const {
+  float getJoltAtTime(const float t) const {
     if (t <= 0.0f || t >= total_duration) return 0.0f;
     const int ph = findPhase(t);
-    return phaseJerk(ph);
+    return phaseJolt(ph);
   }
 
   // Get velocity at a given distance along the trajectory.
-  // Uses Newton's method for jerk phases, quadratic formula for constant-accel phases.
+  // Uses Newton's method for jolt phases, quadratic formula for constant-accel phases.
   float getVelocityAtDistance(const float d) const {
     if (d <= 0.0f) return v_entry;
     if (d >= dist_total) return v_exit;
@@ -496,9 +496,9 @@ public:
     const float delta_s = d - phase_start_pos[ph];
     const float v_ph = phase_start_v[ph];
     const float a_ph = phase_start_a[ph];
-    const float jk = phaseJerk(ph);
+    const float jl = phaseJolt(ph);
 
-    if (jk == 0.0f) {
+    if (jl == 0.0f) {
       // Constant accel: delta_s = v0*t + 0.5*a*t²
       if (a_ph == 0.0f) return v_ph;  // cruise phase
       // t = (-v0 + sqrt(v0² + 2*a*delta_s)) / a
@@ -507,21 +507,21 @@ public:
       return v_ph + a_ph * t;
     }
 
-    // Jerk phase: find t such that s(t) = delta_s, then return v(t).
-    // s(t) = v0*t + 0.5*a0*t² + (jk/6)*t³
+    // Jolt phase: find t such that s(t) = delta_s, then return v(t).
+    // s(t) = v0*t + 0.5*a0*t² + (jl/6)*t³
     // Hybrid Newton/bisection: Newton when f' is healthy, bisection when f'≈0.
-    const float jk6 = (1.0f / 6.0f) * jk;
+    const float jl6 = (1.0f / 6.0f) * jl;
     const float ph_end_pos = (ph < 6) ? phase_start_pos[ph + 1] : dist_total;
     const float phase_dist = ph_end_pos - phase_start_pos[ph];
     float t_lo = 0.0f, t_hi = phase_dt[ph];
     float t = (phase_dist > 0.0f) ? phase_dt[ph] * (delta_s / phase_dist) : 0.0f;
     for (int i = 0; i < 16; i++) {
-      const float f = v_ph * t + 0.5f * a_ph * t * t + jk6 * t * t * t - delta_s;
+      const float f = v_ph * t + 0.5f * a_ph * t * t + jl6 * t * t * t - delta_s;
       // Update bracket
       if (f < 0.0f) t_lo = t; else t_hi = t;
       if (t_hi - t_lo < 1e-7f) break;
       // f' = velocity at t, always ≥ 0
-      const float fp = v_ph + a_ph * t + 0.5f * jk * t * t;
+      const float fp = v_ph + a_ph * t + 0.5f * jl * t * t;
       if (fp > 1e-6f) {
         t -= f / fp;                                  // Newton step
         if (t < t_lo || t > t_hi) t = 0.5f * (t_lo + t_hi); // escaped bracket → bisect
@@ -529,7 +529,7 @@ public:
         t = 0.5f * (t_lo + t_hi);                    // f'≈0 → bisect
       }
     }
-    return v_ph + a_ph * t + 0.5f * jk * t * t;
+    return v_ph + a_ph * t + 0.5f * jl * t * t;
   }
 
   float getExitSpeed() const { return v_exit; }
@@ -611,8 +611,8 @@ public:
     const float dt_in = t_cut - phase_start_time[ph];
 
     // New entry state at the cut point
-    v_entry = phase_start_v[ph] + phase_start_a[ph] * dt_in + 0.5f * phaseJerk(ph) * dt_in * dt_in;
-    a_entry = phase_start_a[ph] + phaseJerk(ph) * dt_in;
+    v_entry = phase_start_v[ph] + phase_start_a[ph] * dt_in + 0.5f * phaseJolt(ph) * dt_in * dt_in;
+    a_entry = phase_start_a[ph] + phaseJolt(ph) * dt_in;
 
     // Zero out fully consumed phases, shorten the cut phase
     for (int i = 0; i < ph; i++) phase_dt[i] = 0.0f;
@@ -624,7 +624,7 @@ public:
   }
 
   // Delegate accessors to the planner
-  ConstantJerkBlockPlanner& planner() { return planner_; }
+  ConstantJoltBlockPlanner& planner() { return planner_; }
   uint8_t bufferConsumed() const { return planner_.bufferConsumed(); }
   uint8_t blockCount() const { return planner_.blockCount(); }
   uint8_t currentBlockIndex() const { return planner_.currentBlockIndex(); }
@@ -635,8 +635,8 @@ public:
            prefix, v_entry, v_exit, a_entry, a_exit, j_max, a_max, dist_total, total_duration);
     for (int i = 0; i < 7; i++) {
       if (phase_dt[i] < 1e-12f) continue;
-      printf("%s  phase[%d]: dt=%.6f jerk=%+.1f  t0=%.6f v0=%.4f a0=%.4f pos0=%.6f\n",
-             prefix, i, phase_dt[i], phaseJerk(i),
+      printf("%s  phase[%d]: dt=%.6f jolt=%+.1f  t0=%.6f v0=%.4f a0=%.4f pos0=%.6f\n",
+             prefix, i, phase_dt[i], phaseJolt(i),
              phase_start_time[i], phase_start_v[i], phase_start_a[i], phase_start_pos[i]);
     }
   }
@@ -761,13 +761,13 @@ private:
 
     float d_covered = d_abs + d_dec;
 
-    // Phase mapping: absorption goes in the phase whose jerk matches j_absorb
+    // Phase mapping: absorption goes in the phase whose jolt matches j_absorb
     if (a_entry > 0.0f) {
-      // j_absorb = -j_max → matches phase 2 jerk
+      // j_absorb = -j_max → matches phase 2 jolt
       phase_dt[0] = phase_dt[1] = 0.0f;
       phase_dt[2] = t0;
     } else {
-      // j_absorb = +j_max → matches phase 0 jerk
+      // j_absorb = +j_max → matches phase 0 jolt
       phase_dt[0] = t0;
       phase_dt[1] = phase_dt[2] = 0.0f;
     }
@@ -794,8 +794,8 @@ private:
     const float dt = t - phase_start_time[ph];
     const float v = phase_start_v[ph];
     const float a = phase_start_a[ph];
-    const float jk = phaseJerk(ph);
-    return phase_start_pos[ph] + v * dt + 0.5f * a * dt * dt + (1.0f / 6.0f) * jk * dt * dt * dt;
+    const float jl = phaseJolt(ph);
+    return phase_start_pos[ph] + v * dt + 0.5f * a * dt * dt + (1.0f / 6.0f) * jl * dt * dt * dt;
   }
 
   void buildPhaseCache() {
@@ -805,7 +805,7 @@ private:
       phase_start_pos[i] = dist;
       phase_start_v[i] = v;
       phase_start_a[i] = a;
-      cj_simulatePhase(phaseJerk(i), phase_dt[i], v, a, dist);
+      cj_simulatePhase(phaseJolt(i), phase_dt[i], v, a, dist);
       t += phase_dt[i];
     }
   }
@@ -822,7 +822,7 @@ private:
     return 6;
   }
 
-  float phaseJerk(int phase) const {
+  float phaseJolt(int phase) const {
     switch (phase) {
       case 0: return j_max;
       case 2: return -j_max;
@@ -832,8 +832,8 @@ private:
     }
   }
 
-  ConstantJerkBlockPlanner planner_;   // Owned by value
-  float* jerk_max_ptr_ = nullptr;
+  ConstantJoltBlockPlanner planner_;   // Owned by value
+  float* jolt_max_ptr_ = nullptr;
 
   float v_entry = 0, v_exit = 0;
   float a_entry = 0;  // initial acceleration (non-zero when carried from previous block)

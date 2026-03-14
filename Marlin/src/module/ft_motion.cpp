@@ -86,8 +86,8 @@ TrapezoidalTrajectoryGenerator FTMotion::trapezoidalGenerator;
   Poly5TrajectoryGenerator FTMotion::poly5Generator;
   Poly6TrajectoryGenerator FTMotion::poly6Generator;
 #endif
-#if ENABLED(FTM_CONSTANT_JERK)
-  ConstantJerkTrajectoryGenerator FTMotion::cjGenerator;
+#if ENABLED(FTM_CONSTANT_JOLT)
+  ConstantJoltTrajectoryGenerator FTMotion::cjGenerator;
 #endif
 #if HAS_FTM_TRAJECTORY_SELECTION
   TrajectoryType FTMotion::trajectoryType = TrajectoryType::FTM_TRAJECTORY_TYPE;
@@ -327,9 +327,9 @@ void FTMotion::init() {
         case TrajectoryType::POLY5:     currentGenerator = &poly5Generator;       break;
         case TrajectoryType::POLY6:     currentGenerator = &poly6Generator;       break;
       #endif
-      #if ENABLED(FTM_CONSTANT_JERK)
-        case TrajectoryType::CONSTANT_JERK:
-          cjGenerator.setJerkMaxPtr(&cfg.jerk_max);
+      #if ENABLED(FTM_CONSTANT_JOLT)
+        case TrajectoryType::CONSTANT_JOLT:
+          cjGenerator.setJoltMaxPtr(&cfg.jolt_max);
           currentGenerator = &cjGenerator;
           break;
       #endif
@@ -346,8 +346,8 @@ void FTMotion::init() {
         case TrajectoryType::POLY5:
         case TrajectoryType::POLY6:
       #endif
-      #if ENABLED(FTM_CONSTANT_JERK)
-        case TrajectoryType::CONSTANT_JERK:
+      #if ENABLED(FTM_CONSTANT_JOLT)
+        case TrajectoryType::CONSTANT_JOLT:
       #endif
         break;
     }
@@ -366,8 +366,8 @@ FSTR_P FTMotion::getTrajectoryName() {
       case TrajectoryType::POLY5:     return GET_TEXT_F(MSG_FTM_POLY5);
       case TrajectoryType::POLY6:     return GET_TEXT_F(MSG_FTM_POLY6);
     #endif
-    #if ENABLED(FTM_CONSTANT_JERK)
-      case TrajectoryType::CONSTANT_JERK: return F("Constant Jerk");
+    #if ENABLED(FTM_CONSTANT_JOLT)
+      case TrajectoryType::CONSTANT_JOLT: return F("Constant Jolt");
     #endif
   }
 }

@@ -28,11 +28,11 @@
   #define ENABLED(V) true
 #endif
 
-#if ENABLED(FTM_CONSTANT_JERK)
+#if ENABLED(FTM_CONSTANT_JOLT)
 
-#include "trajectory_constant_jerk.h"
+#include "trajectory_constant_jolt.h"
 
-bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, float j_max) {
+bool ConstantJoltBlockPlanner::planNext(ConstantJoltTrajectoryGenerator& traj, float j_max) {
   float mm[BLOCK_BUFFER_SIZE];
   float nominal[BLOCK_BUFFER_SIZE];
   float accel[BLOCK_BUFFER_SIZE];
@@ -480,7 +480,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
         float v_at_d2 = traj.getVelocityAtDistance(d2);
         float t_at_d2 = traj.getTimeAtDistance(d2);
         float a_at_d2 = traj.getAccelerationAtTime(t_at_d2);
-        float j_at_d2 = traj.getJerkAtTime(t_at_d2);
+        float j_at_d2 = traj.getJoltAtTime(t_at_d2);
         printf("  merged predicts at block[0+1] (d=%.4f): v=%.4f a=%.4f j=%.1f\n",
                d2, v_at_d2, a_at_d2, j_at_d2);
       }
@@ -503,7 +503,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   a_exit_stored = traj.getExitAccel();
   #ifdef CJ_DEBUG
     printf("  post-truncate: v_exit=%.4f a_exit=%.4f j_exit=%.1f\n",
-           v_exit_stored, a_exit_stored, traj.getJerkAtTime(traj.getTotalDuration()));
+           v_exit_stored, a_exit_stored, traj.getJoltAtTime(traj.getTotalDuration()));
   #endif
 
   // Execution tracking: always consume 1 block
@@ -514,7 +514,7 @@ bool ConstantJerkBlockPlanner::planNext(ConstantJerkTrajectoryGenerator& traj, f
   return true;
 }
 
-float ConstantJerkBlockPlanner::maxReachableSpeed(float v_from, float dist_total,
+float ConstantJoltBlockPlanner::maxReachableSpeed(float v_from, float dist_total,
                                                    float v_max, float a_max, float j_max,
                                                    float a_entry) {
   float v_trap = SQRT(v_from * v_from + 2.0f * a_max * dist_total);
@@ -588,4 +588,4 @@ float ConstantJerkBlockPlanner::maxReachableSpeed(float v_from, float dist_total
   return v_lo;
 }
 
-#endif // FTM_CONSTANT_JERK
+#endif // FTM_CONSTANT_JOLT

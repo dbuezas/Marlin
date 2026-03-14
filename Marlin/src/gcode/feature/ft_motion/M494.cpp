@@ -30,7 +30,7 @@
 #include "../../../lcd/marlinui.h"
 
 void say_ftm_settings() {
-  #if ANY(FTM_POLYS, FTM_SMOOTHING, FTM_CONSTANT_JERK)
+  #if ANY(FTM_POLYS, FTM_SMOOTHING, FTM_CONSTANT_JOLT)
     const ft_config_t &c = ftMotion.cfg;
   #endif
 
@@ -40,9 +40,9 @@ void say_ftm_settings() {
       if (ftMotion.getTrajectoryType() == TrajectoryType::POLY6)
         SERIAL_ECHOLNPGM("  Poly6 Overshoot: ", p_float_t(c.poly6_acceleration_overshoot, 3));
     #endif
-    #if ENABLED(FTM_CONSTANT_JERK)
-      if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JERK)
-        SERIAL_ECHOLNPGM("  Jerk Max: ", p_float_t(c.jerk_max, 1));
+    #if ENABLED(FTM_CONSTANT_JOLT)
+      if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JOLT)
+        SERIAL_ECHOLNPGM("  Jolt Max: ", p_float_t(c.jolt_max, 1));
     #endif
   #endif
 
@@ -58,7 +58,7 @@ void GcodeSuite::M494_report(const bool forReplay/*=true*/) {
   report_heading_etc(forReplay, F("FT Motion"));
   SERIAL_ECHOPGM("  M494 T", (uint8_t)ftMotion.getTrajectoryType());
 
-  #if ANY(FTM_POLYS, FTM_SMOOTHING, FTM_CONSTANT_JERK)
+  #if ANY(FTM_POLYS, FTM_SMOOTHING, FTM_CONSTANT_JOLT)
     const ft_config_t &c = ftMotion.cfg;
   #endif
 
@@ -76,9 +76,9 @@ void GcodeSuite::M494_report(const bool forReplay/*=true*/) {
       SERIAL_ECHOPGM(" O", c.poly6_acceleration_overshoot);
   #endif
 
-  #if ENABLED(FTM_CONSTANT_JERK)
-    if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JERK)
-      SERIAL_ECHOPGM(" J", c.jerk_max);
+  #if ENABLED(FTM_CONSTANT_JOLT)
+    if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JOLT)
+      SERIAL_ECHOPGM(" J", c.jolt_max);
   #endif
 
   SERIAL_EOL();
@@ -88,9 +88,9 @@ void GcodeSuite::M494_report(const bool forReplay/*=true*/) {
  * M494: Set Fixed-time Motion Control parameters
  *
  * Parameters:
- *    T<type> Set trajectory generator type (0=TRAPEZOIDAL, 1=POLY5, 2=POLY6, +=CONSTANT_JERK)
+ *    T<type> Set trajectory generator type (0=TRAPEZOIDAL, 1=POLY5, 2=POLY6, +=CONSTANT_JOLT)
  *    O<overshoot> Set acceleration overshoot for POLY6 (1.25-1.875)
- *    J<jerk> Set maximum jerk for CONSTANT_JERK (mm/s³, positive)
+ *    J<jolt> Set maximum jolt for CONSTANT_JOLT (mm/s³, positive)
  *    X<time> Set smoothing time for the X axis
  *    Y<time> Set smoothing time for the Y axis
  *    Z<time> Set smoothing time for the Z axis
@@ -126,15 +126,15 @@ void GcodeSuite::M494() {
 
   #endif // FTM_POLYS
 
-  #if ENABLED(FTM_CONSTANT_JERK)
+  #if ENABLED(FTM_CONSTANT_JOLT)
 
-    // Parse jerk max parameter.
+    // Parse jolt max parameter.
     if (parser.seenval('J')) {
-      ftMotion.cfg.set_jerkMax(parser.value_float());
+      ftMotion.cfg.set_joltMax(parser.value_float());
       report = true;
     }
 
-  #endif // FTM_CONSTANT_JERK
+  #endif // FTM_CONSTANT_JOLT
 
   #if ENABLED(FTM_SMOOTHING)
 

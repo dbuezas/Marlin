@@ -2744,7 +2744,7 @@ bool Planner::_populate_block(
 
   // Max entry speed of this block equals the max exit speed of the previous block.
   block->max_entry_speed_sqr = vmax_junction_sqr;
-  TERN_(FTM_CONSTANT_JERK, block->vmax_junction = SQRT(vmax_junction_sqr));
+  TERN_(FTM_CONSTANT_JOLT, block->vmax_junction = SQRT(vmax_junction_sqr));
   // Set entry speed. The reverse and forward passes will optimize it later.
   block->entry_speed_sqr = minimum_planner_speed_sqr;
   // Set min entry speed. Rarely it could be higher than the previous nominal speed but that's ok.

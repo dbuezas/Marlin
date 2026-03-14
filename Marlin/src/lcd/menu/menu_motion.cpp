@@ -401,9 +401,9 @@ void menu_move() {
           queue.inject(TS(F("M494"), 'T', int(TrajectoryType::POLY6))); ui.go_back();
         });
       #endif
-      #if ENABLED(FTM_CONSTANT_JERK)
-        if (traj_type != TrajectoryType::CONSTANT_JERK) ACTION_ITEM(MSG_FTM_CONSTANT_JERK, []{
-          queue.inject(TS(F("M494"), 'T', int(TrajectoryType::CONSTANT_JERK))); ui.go_back();
+      #if ENABLED(FTM_CONSTANT_JOLT)
+        if (traj_type != TrajectoryType::CONSTANT_JOLT) ACTION_ITEM(MSG_FTM_CONSTANT_JOLT, []{
+          queue.inject(TS(F("M494"), 'T', int(TrajectoryType::CONSTANT_JOLT))); ui.go_back();
         });
       #endif
 
@@ -559,10 +559,10 @@ void menu_move() {
             });
           }
         #endif
-        #if ENABLED(FTM_CONSTANT_JERK)
-          if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JERK) {
-            editable.decimal = c.jerk_max / 1000;
-            EDIT_ITEM(float4, MSG_FTM_JERK_MAX, &editable.decimal, 1.0f, 9999.0f, []{
+        #if ENABLED(FTM_CONSTANT_JOLT)
+          if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JOLT) {
+            editable.decimal = c.jolt_max / 1000;
+            EDIT_ITEM(float4, MSG_FTM_JOLT_MAX, &editable.decimal, 1.0f, 9999.0f, []{
               queue.inject(TS(F("M494"), 'J', editable.decimal * 1000));
             });
           }
@@ -626,10 +626,10 @@ void menu_move() {
           });
         }
       #endif
-      #if ENABLED(FTM_CONSTANT_JERK)
-        if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JERK) {
-          editable.decimal = ftMotion.cfg.jerk_max / 1000;
-          EDIT_ITEM(float4, MSG_FTM_JERK_MAX, &editable.decimal, 1.0f, 9999.0f, []{
+      #if ENABLED(FTM_CONSTANT_JOLT)
+        if (ftMotion.getTrajectoryType() == TrajectoryType::CONSTANT_JOLT) {
+          editable.decimal = ftMotion.cfg.jolt_max / 1000;
+          EDIT_ITEM(float4, MSG_FTM_JOLT_MAX, &editable.decimal, 1.0f, 9999.0f, []{
             queue.inject(TS(F("M494"), 'J', editable.decimal * 1000));
           });
         }

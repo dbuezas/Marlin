@@ -26,16 +26,16 @@
 #define CJP_MERGE_AMAX_RATIO 1.1f
 
 /**
- * Constant-jerk block planner (1-block emission with non-zero a_entry)
+ * Constant-jolt block planner (1-block emission with non-zero a_entry)
  *
  * The standard trapezoidal planner assumes instant acceleration changes.
- * Under jerk constraints, S-curves need more distance for the same speed
+ * Under jolt constraints, S-curves need more distance for the same speed
  * change, so a different planner is needed.
  *
  * This planner:
  * - Ignores Marlin's trapezoidal entry/exit speeds entirely
  * - Uses block->vmax_junction as the junction speed ceiling (geometric limit)
- * - Runs a jerk-aware backward pass on all visible blocks
+ * - Runs a jolt-aware backward pass on all visible blocks
  * - Merges compatible consecutive blocks into a superblock trajectory,
  *   but emits only the first block, carrying exit (v, a) to the next cycle
  *
@@ -81,10 +81,10 @@
  *   conservative backward pass (which assumes a=0 at boundaries).
  */
 
-class ConstantJerkTrajectoryGenerator;  // Forward declaration
+class ConstantJoltTrajectoryGenerator;  // Forward declaration
 
 // Pre-truncation trajectory state for reuse optimization.
-// Shared between ConstantJerkBlockPlanner and ConstantJerkTrajectoryGenerator.
+// Shared between ConstantJoltBlockPlanner and ConstantJoltTrajectoryGenerator.
 struct CJTrajectorySnapshot {
   float phase_dt[7] = {};
   float v_entry = 0, a_entry = 0;
@@ -108,7 +108,7 @@ static inline float minVal(const float* arr, uint8_t from, uint8_t to) {
   return v;
 }
 
-class ConstantJerkBlockPlanner {
+class ConstantJoltBlockPlanner {
  public:
   // Reset all planner state (called by the generator's planRunout/reset).
   void resetPlannerState() {
@@ -126,13 +126,13 @@ class ConstantJerkBlockPlanner {
   /**
    * Plan trajectory for the current block (already consumed from planner buffer).
    *
-   * Looks ahead at future blocks via get_future_block(), runs a jerk-aware
+   * Looks ahead at future blocks via get_future_block(), runs a jolt-aware
    * reverse/forward pass across all visible blocks, then plans the first
    * block (or merged group) as an S-curve trajectory.
    *
    * Returns true if a trajectory is ready for execution.
    */
-  bool planNext(ConstantJerkTrajectoryGenerator& traj, float j_max);
+  bool planNext(ConstantJoltTrajectoryGenerator& traj, float j_max);
 
   uint8_t blockCount() const { return group_block_count; }
   uint8_t bufferConsumed() const { return group_buffer_consumed; }
@@ -140,7 +140,7 @@ class ConstantJerkBlockPlanner {
 
  private:
   /**
-   * Max speed reachable from v_from over dist_total via jerk-limited ramp,
+   * Max speed reachable from v_from over dist_total via jolt-limited ramp,
    * capped by v_max. Newton's method on closed-form cj_rampDist.
    * When v_from > v_max, returns v_max (hard ceiling).
    * Monotone in dist_total: more distance → higher or equal result.

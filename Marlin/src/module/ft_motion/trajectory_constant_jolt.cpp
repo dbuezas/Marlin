@@ -28,16 +28,16 @@
   #define ENABLED(V) true
 #endif
 
-#if ENABLED(FTM_CONSTANT_JERK)
+#if ENABLED(FTM_CONSTANT_JOLT)
 
-#include "trajectory_constant_jerk.h"
+#include "trajectory_constant_jolt.h"
 
-void ConstantJerkTrajectoryGenerator::plan(
+void ConstantJoltTrajectoryGenerator::plan(
     const float, const float, const float, const float, const float) {
-  planner_.planNext(*this, *jerk_max_ptr_);
+  planner_.planNext(*this, *jolt_max_ptr_);
 }
 
-void ConstantJerkTrajectoryGenerator::planRunout(const float duration) {
+void ConstantJoltTrajectoryGenerator::planRunout(const float duration) {
   planner_.resetPlannerState();
   reset();
   // Cruise at zero speed for the entire duration (same as trapezoidal)
@@ -46,8 +46,8 @@ void ConstantJerkTrajectoryGenerator::planRunout(const float duration) {
   buildPhaseCache();
 }
 
-bool ConstantJerkTrajectoryGenerator::planNext(float j_max) {
+bool ConstantJoltTrajectoryGenerator::planNext(float j_max) {
   return planner_.planNext(*this, j_max);
 }
 
-#endif // FTM_CONSTANT_JERK
+#endif // FTM_CONSTANT_JOLT

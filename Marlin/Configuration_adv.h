@@ -1218,24 +1218,24 @@
 
   #define FTM_POLYS                             // Disable POLY5/6 to save ~3k of Flash. Preserves TRAPEZOIDAL.
   #if ENABLED(FTM_POLYS)
-    #define FTM_TRAJECTORY_TYPE CONSTANT_JERK     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
+    #define FTM_TRAJECTORY_TYPE CONSTANT_JOLT     // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6)
                                                 // TRAPEZOIDAL: Continuous Velocity. Max acceleration is respected.
                                                 // POLY5:       Like POLY6 with 1.5x but uses less CPU.
                                                 // POLY6:       Continuous Acceleration (aka S_CURVE).
-                                                // CONSTANT_JERK: requires FTM_CONSTANT_JERK.
+                                                // CONSTANT_JOLT: requires FTM_CONSTANT_JOLT.
                                                 // POLY trajectories not only reduce resonances without rounding corners, but also
                                                 // reduce extruder strain due to linear advance.
 
     #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.875f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)
   #endif
 
-  #define FTM_CONSTANT_JERK                     // Enable constant-jerk (7-phase S-curve) trajectory
-                                                // Jerk here means the rate of change of acceleration, is not related
+  #define FTM_CONSTANT_JOLT                     // Enable constant-jolt (7-phase S-curve) trajectory
+                                                // Jolt is the rate of change of acceleration, not related
                                                 // to Marlin's "classic jerk"
                                                 // Acceleration will ramp up gradually, so max acceleration is limited
                                                 // by max speed and distance travelled
-  #if ENABLED(FTM_CONSTANT_JERK)
-    #define FTM_DEFAULT_JERK_MAX 400'000.0f     // (mm/s³) Default maximum jerk for constant-jerk trajectory
+  #if ENABLED(FTM_CONSTANT_JOLT)
+    #define FTM_DEFAULT_JOLT_MAX 400'000.0f     // (mm/s³) Default maximum jolt for constant-jolt trajectory
                                                 // Higher prints faster at the cost of increased resonance and extruder stress
   #endif
 
