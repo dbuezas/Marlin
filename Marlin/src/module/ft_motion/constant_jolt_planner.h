@@ -73,12 +73,22 @@
  *      b. Plan left S-curve toward v_junction
  *      c. Check velocity at block 0 exit against vmax_junction[1]
  *      d. Check interior junctions against vmax_junction[k]
- *   3. For candidate=1 if decel overshoots, replan targeting v=0
- *      (full decel uses LESS distance than partial — S-curve asymmetry).
+ *   3. For candidate=1 if exit overshoots vmax_junction[1], replan
+ *      targeting v=0 (safety fallback — no smaller candidate available).
  *   4. Truncate trajectory to block 0, store (v, a) exit state.
  *
  *   Replanning each cycle from actual (v, a) compensates for the
  *   conservative backward pass (which assumes a=0 at boundaries).
+ *
+ * ─── Feasibility invariant ───
+ *
+ *   The very first call starts with v_entry=0, a_entry=0. From rest,
+ *   a feasible trajectory always exists for any distance (accelerate
+ *   arbitrarily little, then decelerate back to zero). Each subsequent
+ *   call enters with the (v, a) from truncating a feasible trajectory
+ *   at block 0's boundary — a state that was reachable within a valid
+ *   plan. Since the planner can always fall back to decelerating to v=0
+ *   from any such state, feasibility is maintained across all cycles.
  */
 
 class ConstantJoltTrajectoryGenerator;  // Forward declaration
@@ -141,7 +151,7 @@ class ConstantJoltBlockPlanner {
  private:
   /**
    * Max speed reachable from v_from over dist_total via jolt-limited ramp,
-   * capped by v_max. Newton's method on closed-form cj_rampDist.
+   * capped by v_max. Bracketed Newton on closed-form cj_rampDist.
    * When v_from > v_max, returns v_max (hard ceiling).
    * Monotone in dist_total: more distance → higher or equal result.
    *

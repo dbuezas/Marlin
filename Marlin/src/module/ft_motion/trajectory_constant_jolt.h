@@ -147,15 +147,6 @@ static inline float cj_planDecelRampWithA(
   return dist;
 }
 
-// Symmetric total ramp distance
-static inline float cj_totalRampDist(float v_peak, float v_small, float v_large,
-                                     float j_max, float a_max) {
-  float dt_jolt1, dt_hold, dt_jolt2;
-  float dist_accel = cj_planRamp(v_small, v_peak, j_max, a_max, false, dt_jolt1, dt_hold, dt_jolt2);
-  float dist_decel = cj_planRamp(v_large, v_peak, j_max, a_max, true, dt_jolt1, dt_hold, dt_jolt2);
-  return dist_accel + dist_decel;
-}
-
 // Closed-form ramp distance (O(1), no simulation).
 // Equivalent to cj_planRamp but without computing phase durations.
 //   Triangular (j*dv ≤ a_max²):  s = (v_s + v_p) * sqrt(dv / j)
@@ -383,6 +374,8 @@ public:
                  float a_max_in, float j_max_in,
                  float dist_total_in, float v_nominal,
                  float a_entry_in = 0.0f) {
+    // NOTE: these member writes happen before we know if the plan succeeds.
+    // On failure, callers that retry must re-call plan_full to restore state.
     v_entry = v_entry_in;
     v_exit = v_exit_in;
     a_max = a_max_in;
@@ -775,6 +768,8 @@ private:
     phase_dt[4] = dt_d1; phase_dt[5] = dt_d2; phase_dt[6] = dt_d3;
 
     total_duration = t0 + dt_d1 + dt_d2 + dt_d3;
+    // _MAX because bisection uses conservative t0_lo, so d_covered may
+    // be slightly less than dist_total (set to dist_total_in at entry).
     dist_total = _MAX(dist_total, d_covered);
     buildPhaseCache();
 

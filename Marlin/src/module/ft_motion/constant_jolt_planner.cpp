@@ -517,6 +517,8 @@ bool ConstantJoltBlockPlanner::planNext(ConstantJoltTrajectoryGenerator& traj, f
 float ConstantJoltBlockPlanner::maxReachableSpeed(float v_from, float dist_total,
                                                    float v_max, float a_max, float j_max,
                                                    float a_entry) {
+  // Trapezoidal upper bound: v²=v₀²+2ad always overestimates reachable
+  // speed (no jolt phases), so v_trap >= the true S-curve answer.
   float v_trap = SQRT(v_from * v_from + 2.0f * a_max * dist_total);
   float hi = _MIN(v_max, v_trap);
 
