@@ -1239,7 +1239,7 @@
     #define FTM_POLY6_ACCELERATION_OVERSHOOT 1.875f // Max acceleration overshoot factor for POLY6 (1.25 to 1.875)
   #endif
 
-  //#define FTM_CONSTANT_JOLT                     // Enable constant-jolt (7-phase S-curve) trajectory
+  #define FTM_CONSTANT_JOLT                     // Enable constant-jolt (7-phase S-curve) trajectory
                                                 // Jolt is the rate of change of acceleration, not related
                                                 // to Marlin's "classic jerk"
                                                 // Acceleration will ramp up gradually, so max acceleration is limited
@@ -1249,7 +1249,7 @@
                                                 // Higher prints faster at the cost of increased resonance and extruder stress
   #endif
 
-  #define FTM_TRAJECTORY_TYPE TRAPEZOIDAL         // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6, CONSTANT_JOLT)
+  #define FTM_TRAJECTORY_TYPE CONSTANT_JOLT       // Block acceleration profile (TRAPEZOIDAL, POLY5, POLY6, CONSTANT_JOLT)
                                                 // TRAPEZOIDAL: Continuous Velocity. Max acceleration is respected.
                                                 // POLY5:       Like POLY6 with 1.5x but uses less CPU. Requires FTM_POLYS.
                                                 // POLY6:       Continuous Acceleration (aka S_CURVE). Requires FTM_POLYS.
