@@ -1733,7 +1733,7 @@
   //#define PROBE_TOOLCHANGE_NO_MOVE  // Suppress motion on probe tool-change
 #endif
 
-#define PROBE_WAKEUP_TIME_MS  30    // (ms) Time for the probe to wake up
+#define PROBE_WAKEUP_TIME_MS  50    // (ms) Time for the probe to wake up
 
 // Most probes should stay away from the edges of the bed, but
 // with NOZZLE_AS_PROBE this can be negative for a wider probing area.

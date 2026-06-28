@@ -1200,17 +1200,17 @@
   #define FTM_SHAPER_MZV
 
   #define FTM_DEFAULT_SHAPER_X      ftMotionShaper_MZV // Default shaper mode on X axis (NONE, ZV, ZVD, ZVDD, ZVDDD, EI, 2HEI, 3HEI, MZV)
-  #define FTM_SHAPING_DEFAULT_FREQ_X   53.0f    // (Hz) Default peak frequency used by input shapers
+  #define FTM_SHAPING_DEFAULT_FREQ_X   69.0f    // (Hz) Default peak frequency used by input shapers
   #define FTM_SHAPING_ZETA_X            0.15f    // Zeta used by input shapers for X axis
   #define FTM_SHAPING_V_TOL_X           0.05f   // Vibration tolerance used by EI input shapers for X axis
 
   #define FTM_DEFAULT_SHAPER_Y      ftMotionShaper_MZV // Default shaper mode on Y axis
-  #define FTM_SHAPING_DEFAULT_FREQ_Y   49.0f    // (Hz) Default peak frequency used by input shapers
+  #define FTM_SHAPING_DEFAULT_FREQ_Y   65.0f    // (Hz) Default peak frequency used by input shapers
   #define FTM_SHAPING_ZETA_Y            0.05f    // Zeta used by input shapers for Y axis
   #define FTM_SHAPING_V_TOL_Y           0.05f   // Vibration tolerance used by EI input shapers for Y axis
 
   #define FTM_SHAPER_Z                        // Include Z shaping support
-  #define FTM_DEFAULT_SHAPER_Z      ftMotionShaper_MZV // Default shaper mode on Z axis
+  #define FTM_DEFAULT_SHAPER_Z      ftMotionShaper_ZVDDD // Default shaper mode on Z axis
   #define FTM_SHAPING_DEFAULT_FREQ_Z   21.0f    // (Hz) Default peak frequency used by input shapers
   #define FTM_SHAPING_ZETA_Z            0.03f   // Zeta used by input shapers for Z axis
   #define FTM_SHAPING_V_TOL_Z           0.05f   // Vibration tolerance used by EI input shapers for Z axis
@@ -2934,7 +2934,7 @@
   #define RETRACT_LENGTH                0.5   // (mm) Default retract length (positive value)
   #define RETRACT_LENGTH_SWAP           5.0   // (mm) Default swap retract length (positive value)
   #define RETRACT_FEEDRATE              60.0  // (mm/s) Default feedrate for retracting
-  #define RETRACT_ZRAISE                0.1   // (mm) Default retract Z-raise
+  #define RETRACT_ZRAISE                0.0   // (mm) Default retract Z-raise
   #define RETRACT_RECOVER_LENGTH        0.0   // (mm) Default additional recover length (added to retract length on recover)
   #define RETRACT_RECOVER_LENGTH_SWAP   0.0   // (mm) Default additional swap recover length (added to retract length on recover from toolchange)
   #define RETRACT_RECOVER_FEEDRATE      60.0  // (mm/s) Default feedrate for recovering from retraction
